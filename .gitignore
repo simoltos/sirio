@@ -1,0 +1,4 @@
+sirio
+*.o
+.sec
+tests/*_test
