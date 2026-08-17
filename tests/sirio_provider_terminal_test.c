@@ -229,6 +229,51 @@ static void test_nullable_usage_success(void)
     stream_response_free(&response);
 }
 
+static void test_nullable_optional_chat_fields_success(void)
+{
+    static const char text_body[] =
+        "data: {\"id\":\"req\",\"model\":\"m\",\"choices\":[{"        \
+        "\"index\":0,\"delta\":{\"content\":\"x\","                    \
+        "\"reasoning_content\":null,\"tool_calls\":null},"                 \
+        "\"finish_reason\":\"stop\"}],\"usage\":null}\n\n"
+        "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":2,"          \
+        "\"completion_tokens\":1,\"total_tokens\":3,"                    \
+        "\"completion_tokens_details\":null}}\n\n"
+        TERMINAL_DONE;
+    static const char tool_body[] =
+        "data: {\"id\":\"req\",\"model\":\"m\",\"choices\":[{"        \
+        "\"index\":0,\"delta\":{\"content\":null,\"tool_calls\":[{"    \
+        "\"index\":0,\"id\":\"call\",\"type\":\"function\","          \
+        "\"function\":{\"name\":\"read\",\"arguments\":\"\"}}]},"     \
+        "\"finish_reason\":null}]}\n\n"
+        "data: {\"id\":\"req\",\"model\":\"m\",\"choices\":[{"        \
+        "\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,"          \
+        "\"id\":null,\"type\":null,\"function\":{\"name\":null,"       \
+        "\"arguments\":\"{}\"}}]},\"finish_reason\":null}]}\n\n"
+        "data: {\"id\":\"req\",\"model\":\"m\",\"choices\":[{"        \
+        "\"index\":0,\"delta\":{\"tool_calls\":null},"                   \
+        "\"finish_reason\":\"tool_calls\"}]}\n\n"
+        TERMINAL_USAGE TERMINAL_DONE;
+    stream_response response;
+    terminal_capture capture;
+
+    terminal_response_init(&response, &capture);
+    TERMINAL_CHECK(terminal_feed_chunks(&response, text_body, 3) == 0);
+    TERMINAL_CHECK(stream_finish(&response) == 0);
+    TERMINAL_CHECK(capture.text_events == 1);
+    TERMINAL_CHECK(capture.usage_events == 1);
+    TERMINAL_CHECK(capture.done_events == 1);
+    stream_response_free(&response);
+
+    terminal_response_init(&response, &capture);
+    TERMINAL_CHECK(terminal_feed_chunks(&response, tool_body, 5) == 0);
+    TERMINAL_CHECK(stream_finish(&response) == 0);
+    TERMINAL_CHECK(capture.tool_events == 1);
+    TERMINAL_CHECK(capture.usage_events == 1);
+    TERMINAL_CHECK(capture.done_events == 1);
+    stream_response_free(&response);
+}
+
 static void test_identity_and_finish_changes(void)
 {
     static const char request_change[] =
@@ -523,6 +568,7 @@ int main(void)
     test_empty_and_incomplete_terminal_states();
     test_duplicate_and_post_done_events();
     test_nullable_usage_success();
+    test_nullable_optional_chat_fields_success();
     test_identity_and_finish_changes();
     test_incomplete_and_empty_tool_calls();
     test_invalid_utf8_fields();

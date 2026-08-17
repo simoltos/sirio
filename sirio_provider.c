@@ -1249,6 +1249,8 @@ static int result_add_call(deepseek_result *result,
 }
 
 static int parse_function(json_parser *parser, sirio_tool_call *call) {
+    parser_skip_space(parser);
+    if (parser_match(parser, "null")) return 0;
     if (parser_expect(parser, '{') != 0) return -1;
     parser_skip_space(parser);
     if (parser->cursor < parser->end && *parser->cursor == '}') {
@@ -1265,10 +1267,10 @@ static int parse_function(json_parser *parser, sirio_tool_call *call) {
         int status;
         if (!strcmp(key, "name")) {
             free(call->name);
-            status = parser_string(parser, &call->name);
+            status = parser_nullable_string(parser, &call->name);
         } else if (!strcmp(key, "arguments")) {
             free(call->arguments_json);
-            status = parser_string(parser, &call->arguments_json);
+            status = parser_nullable_string(parser, &call->arguments_json);
         } else {
             status = parser_skip_value(parser, 0);
         }
@@ -1334,6 +1336,8 @@ fail:
 }
 
 static int parse_tool_calls(json_parser *parser, deepseek_result *result) {
+    parser_skip_space(parser);
+    if (parser_match(parser, "null")) return 0;
     if (parser_expect(parser, '[') != 0) return -1;
     parser_skip_space(parser);
     if (parser->cursor < parser->end && *parser->cursor == ']') {
@@ -1409,6 +1413,8 @@ fail:
 
 static int parse_tool_call_deltas(json_parser *parser,
                                   deepseek_result *result) {
+    parser_skip_space(parser);
+    if (parser_match(parser, "null")) return 0;
     if (parser_expect(parser, '[') != 0) return -1;
     parser_skip_space(parser);
     if (parser->cursor < parser->end && *parser->cursor == ']') {
@@ -1597,6 +1603,8 @@ static int parse_api_error(json_parser *parser, deepseek_result *result) {
 
 static int parse_completion_token_details(json_parser *parser,
                                           deepseek_result *result) {
+    parser_skip_space(parser);
+    if (parser_match(parser, "null")) return 0;
     if (parser_expect(parser, '{') != 0) return -1;
     parser_skip_space(parser);
     if (parser->cursor < parser->end && *parser->cursor == '}') {
