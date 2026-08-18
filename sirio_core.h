@@ -17,7 +17,7 @@
 #define PATH_MAX 4096
 #endif
 
-#define SIRIO_SUBAGENT_DEPTH_ENV "SIRIO_SUBAGENT_DEPTH"
+#define SIRIO_SUBPROCESS_DEPTH_ENV "SIRIO_SUBPROCESS_DEPTH"
 
 /* Opaque inference engine handle. */
 typedef struct sirio_engine sirio_engine;

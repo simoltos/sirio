@@ -38,8 +38,8 @@ static sirio_help_colors sirio_help_make_colors(FILE *fp) {
 
 static const char *sirio_help_description(const char *command) {
     if (!command)
-        return "Run a terminal coding agent against supported cloud providers, "
-               "with local tools, portable sessions, and a responsive prompt.";
+        return "Run a DeepSeek-centered terminal coding agent through its "
+               "default provider, with local tools and delegated models.";
     if (!strcmp(command, "auth"))
         return "Manage provider authentication.";
     if (!strcmp(command, "catalog"))
@@ -193,10 +193,8 @@ static void sirio_help_sessions(FILE *fp,
 static void sirio_help_general_options(FILE *fp,
                                        const sirio_help_colors *colors) {
     sirio_help_title(fp, colors, "Options");
-    sirio_help_option(fp, colors, "--provider PROVIDER",
-                      "Provider for a run; with catalog --models, filter the list.");
     sirio_help_option(fp, colors, "-m, --model MODEL",
-                      "Model for this invocation.");
+                      "DeepSeek entry model for this invocation.");
     sirio_help_option(fp, colors, "-p, --prompt TEXT",
                       "Submit the initial prompt.");
     sirio_help_option(fp, colors, "--non-interactive",
@@ -236,7 +234,7 @@ static void sirio_help_commands(FILE *fp, const sirio_help_colors *colors,
     sirio_help_command(fp, colors, colors->red, "/list",
                       "List saved sessions by recent use.");
     sirio_help_command(fp, colors, colors->red, "/model MODEL [THINKING]",
-                      "Change model within this provider while idle.");
+                      "Change DeepSeek entry model while idle.");
     sirio_help_command(fp, colors, colors->red, "/switch ID",
                       "Load a saved session and show recent history.");
     sirio_help_command(fp, colors, colors->red, "/del ID",
@@ -265,7 +263,7 @@ static void sirio_help_commands(FILE *fp, const sirio_help_colors *colors,
     sirio_help_command(fp, colors, colors->purple, "Alt+, / Alt+.",
                        "Decrease or increase reasoning effort while idle.");
     sirio_help_command(fp, colors, colors->purple, "Alt+k / Alt+l",
-                       "Select the previous or next active model for this provider.");
+                       "Select the previous or next active entry model.");
     fputc('\n', fp);
 }
 

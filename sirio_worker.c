@@ -54,8 +54,8 @@ static bool agent_worker_load_session(agent_worker *worker,
 
 extern char **environ;
 
-#define SIRIO_SUBAGENT_MAX_DEPTH 4
-#define SIRIO_SUBAGENT_OUTPUT_LIMIT (128u * 1024u)
+#define SIRIO_SUBPROCESS_MAX_DEPTH 4
+#define SIRIO_SUBPROCESS_OUTPUT_LIMIT (128u * 1024u)
 
 /* The provider owns call framing; Sirio validates arguments before forwarding. */
 static const sirio_tool sirio_native_tools[] = {
@@ -115,8 +115,8 @@ static const sirio_tool sirio_native_tools[] = {
         .input_schema_json = "{\"type\":\"object\",\"properties\":{\"url\":{\"type\":\"string\"}},\"required\":[\"url\"],\"additionalProperties\":false}",
     },
     {
-        .name = "sirio",
-        .description = "Delegate a focused task to another host-side Sirio agent in the same workspace.",
+        .name = "subprocess",
+        .description = "Run a focused task in a separate host-side agent process in the same workspace; model may select any active catalog model and defaults to the current model.",
         .input_schema_json = "{\"type\":\"object\",\"properties\":{\"prompt\":{\"type\":\"string\"},\"model\":{\"type\":\"string\"},\"reasoning\":{\"type\":\"string\"}},\"required\":[\"prompt\"],\"additionalProperties\":false}",
     },
 };
@@ -155,9 +155,11 @@ static const char sirio_native_prompt_edit_upto[] =
 static const char sirio_native_prompt_tail[] =
     "For long-running bash commands, pass refresh_sec. If a job is still "
     "running, use bash_status to inspect new output or bash_stop to terminate "
-    "it. Use sirio to delegate a focused, self-contained task to another "
-    "agent; it runs on the host in the same workspace and starts its own tool "
-    "container. Use google_search to discover pages and visit_page to read a "
+    "it. Use subprocess to delegate a focused, self-contained task to another "
+    "agent process; it runs on the host in the same workspace and starts its "
+    "own tool container. Models outside the DeepSeek entry points are available "
+    "only through subprocess; use provider/model when selecting one. Use "
+    "google_search to discover pages and visit_page to read a "
     "known URL; the first web action may require permission to start a visible "
     "browser. Treat tool errors as actionable observations and retry with "
     "corrected or smaller inputs. Preserve the current system configuration "
@@ -853,7 +855,8 @@ static bool worker_native_call_convert(const sirio_tool_call *native,
 static const char *worker_native_display_detail(const agent_tool_call *call) {
     const char *name = call->name ? call->name : "";
     if (!strcmp(name, "bash")) return worker_tool_arg_value(call, "command");
-    if (!strcmp(name, "sirio")) return worker_tool_arg_value(call, "prompt");
+    if (!strcmp(name, "subprocess"))
+        return worker_tool_arg_value(call, "prompt");
     if (!strcmp(name, "search") || !strcmp(name, "google_search"))
         return worker_tool_arg_value(call, "query");
     if (!strcmp(name, "visit_page")) return worker_tool_arg_value(call, "url");
@@ -888,9 +891,9 @@ static void worker_native_display_call(agent_worker *w,
                    arguments_valid ? "" : " [invalid arguments]");
 }
 
-static bool worker_sirio_depth(unsigned *depth_out,
-                               char *error, size_t error_len) {
-    const char *text = getenv(SIRIO_SUBAGENT_DEPTH_ENV);
+static bool worker_subprocess_depth(unsigned *depth_out,
+                                    char *error, size_t error_len) {
+    const char *text = getenv(SIRIO_SUBPROCESS_DEPTH_ENV);
     if (!text || !text[0]) {
         *depth_out = 0;
         return true;
@@ -898,7 +901,7 @@ static bool worker_sirio_depth(unsigned *depth_out,
     for (const char *cursor = text; *cursor; cursor++) {
         if (isdigit((unsigned char)*cursor)) continue;
         snprintf(error, error_len, "%s must be a nonnegative integer",
-                 SIRIO_SUBAGENT_DEPTH_ENV);
+                 SIRIO_SUBPROCESS_DEPTH_ENV);
         return false;
     }
     errno = 0;
@@ -906,7 +909,7 @@ static bool worker_sirio_depth(unsigned *depth_out,
     unsigned long depth = strtoul(text, &end, 10);
     if (errno || !end || *end || depth > UINT_MAX) {
         snprintf(error, error_len, "%s is out of range",
-                 SIRIO_SUBAGENT_DEPTH_ENV);
+                 SIRIO_SUBPROCESS_DEPTH_ENV);
         return false;
     }
     *depth_out = (unsigned)depth;
@@ -946,9 +949,9 @@ static bool worker_capture_pipe(int descriptors[2],
     return true;
 }
 
-static char **worker_sirio_environment(unsigned depth,
-                                       char **depth_entry_out) {
-    static const char prefix[] = SIRIO_SUBAGENT_DEPTH_ENV "=";
+static char **worker_subprocess_environment(unsigned depth,
+                                            char **depth_entry_out) {
+    static const char prefix[] = SIRIO_SUBPROCESS_DEPTH_ENV "=";
     size_t count = 0;
     while (environ && environ[count]) count++;
 
@@ -970,15 +973,15 @@ static char **worker_sirio_environment(unsigned depth,
     return environment;
 }
 
-static int worker_spawn_sirio(const char *executable,
-                              const char *model,
-                              const char *reasoning,
-                              const char *prompt,
-                              unsigned depth,
-                              pid_t *pid_out,
-                              int *stdout_fd_out,
-                              int *stderr_fd_out,
-                              char *error, size_t error_len) {
+static int worker_spawn_subprocess(const char *executable,
+                                   const char *model,
+                                   const char *reasoning,
+                                   const char *prompt,
+                                   unsigned depth,
+                                   pid_t *pid_out,
+                                   int *stdout_fd_out,
+                                   int *stderr_fd_out,
+                                   char *error, size_t error_len) {
     int stdout_pipe[2];
     int stderr_pipe[2];
     if (!worker_capture_pipe(stdout_pipe, error, error_len)) return -1;
@@ -1021,7 +1024,7 @@ static int worker_spawn_sirio(const char *executable,
             NULL,
         };
         char *depth_entry = NULL;
-        char **environment = worker_sirio_environment(
+        char **environment = worker_subprocess_environment(
             depth + 1, &depth_entry);
         spawn_status = strchr(executable, '/') ?
             posix_spawn(&pid, executable, &actions, NULL,
@@ -1051,12 +1054,12 @@ static void worker_capture_append(agent_buf *buffer,
                                   char *data, size_t length) {
     for (size_t i = 0; i < length; i++)
         if (data[i] == '\0') data[i] = ' ';
-    if (buffer->len >= SIRIO_SUBAGENT_OUTPUT_LIMIT) {
+    if (buffer->len >= SIRIO_SUBPROCESS_OUTPUT_LIMIT) {
         buffer->truncated = true;
         return;
     }
-    if (length > SIRIO_SUBAGENT_OUTPUT_LIMIT - buffer->len) {
-        length = SIRIO_SUBAGENT_OUTPUT_LIMIT - buffer->len;
+    if (length > SIRIO_SUBPROCESS_OUTPUT_LIMIT - buffer->len) {
+        length = SIRIO_SUBPROCESS_OUTPUT_LIMIT - buffer->len;
         buffer->truncated = true;
     }
     if (buffer->len + length + 1 > buffer->cap) {
@@ -1090,12 +1093,12 @@ static int worker_capture_drain(int *fd, agent_buf *buffer) {
     }
 }
 
-static int worker_wait_for_sirio(agent_worker *worker, pid_t pid,
-                                 int stdout_fd, int stderr_fd,
-                                 agent_buf *stdout_capture,
-                                 agent_buf *stderr_capture,
-                                 int *status_out,
-                                 char *error, size_t error_len) {
+static int worker_wait_for_subprocess(agent_worker *worker, pid_t pid,
+                                      int stdout_fd, int stderr_fd,
+                                      agent_buf *stdout_capture,
+                                      agent_buf *stderr_capture,
+                                      int *status_out,
+                                      char *error, size_t error_len) {
     bool interrupt_sent = false;
     int status = 0;
     for (;;) {
@@ -1173,7 +1176,7 @@ static char *worker_capture_take(agent_buf *capture) {
     return output;
 }
 
-static char *worker_sirio_tool_error(const char *message) {
+static char *worker_subprocess_tool_error(const char *message) {
     agent_buf output = {0};
     agent_buf_puts(&output, "Tool error: ");
     agent_buf_puts(&output, message);
@@ -1181,16 +1184,18 @@ static char *worker_sirio_tool_error(const char *message) {
     return agent_buf_take(&output);
 }
 
-static char *worker_execute_sirio_tool(agent_worker *worker,
-                                       const agent_tool_call *call) {
+static char *worker_execute_subprocess_tool(agent_worker *worker,
+                                            const agent_tool_call *call) {
     const char *prompt = worker_tool_arg_value(call, "prompt");
     if (!prompt || !prompt[0])
-        return worker_sirio_tool_error("sirio requires a non-empty prompt");
+        return worker_subprocess_tool_error(
+            "subprocess requires a non-empty prompt");
 
     char inherited_model[160] = {0};
     const char *model = worker_tool_arg_value(call, "model");
     if (model && !model[0])
-        return worker_sirio_tool_error("sirio model cannot be empty");
+        return worker_subprocess_tool_error(
+            "subprocess model cannot be empty");
     if (!model && worker->engine) {
         const char *provider = sirio_provider_name(worker->engine->provider);
         int length = provider && worker->engine->model ?
@@ -1203,43 +1208,44 @@ static char *worker_execute_sirio_tool(agent_worker *worker,
         }
     }
     if (!model || !model[0])
-        return worker_sirio_tool_error("current model is unavailable");
+        return worker_subprocess_tool_error("current model is unavailable");
 
     const char *reasoning = worker_tool_arg_value(call, "reasoning");
     if (!reasoning && worker->engine)
         reasoning = sirio_reasoning_name(worker->engine->reasoning);
     if (!reasoning || !sirio_reasoning_parse(reasoning, NULL))
-        return worker_sirio_tool_error(
-            "sirio reasoning must be none, low, medium, high, xhigh, or max");
+        return worker_subprocess_tool_error(
+            "subprocess reasoning must be none, low, medium, high, xhigh, "
+            "or max");
 
     unsigned depth = 0;
     char error[256] = {0};
-    if (!worker_sirio_depth(&depth, error, sizeof(error)))
-        return worker_sirio_tool_error(error);
-    if (depth >= SIRIO_SUBAGENT_MAX_DEPTH) {
+    if (!worker_subprocess_depth(&depth, error, sizeof(error)))
+        return worker_subprocess_tool_error(error);
+    if (depth >= SIRIO_SUBPROCESS_MAX_DEPTH) {
         char limit[96];
         snprintf(limit, sizeof(limit),
-                 "sirio delegation depth limit (%d) reached",
-                 SIRIO_SUBAGENT_MAX_DEPTH);
-        return worker_sirio_tool_error(limit);
+                 "subprocess depth limit (%d) reached",
+                 SIRIO_SUBPROCESS_MAX_DEPTH);
+        return worker_subprocess_tool_error(limit);
     }
     if (!worker->cfg->executable_path ||
         !worker->cfg->executable_path[0])
-        return worker_sirio_tool_error(
-            "host Sirio executable path is unavailable");
+        return worker_subprocess_tool_error(
+            "host agent executable path is unavailable");
 
     pid_t pid;
     int stdout_fd;
     int stderr_fd;
-    if (worker_spawn_sirio(worker->cfg->executable_path,
+    if (worker_spawn_subprocess(worker->cfg->executable_path,
                            model, reasoning, prompt, depth,
                            &pid, &stdout_fd, &stderr_fd,
                            error, sizeof(error)) != 0) {
         agent_buf message = {0};
-        agent_buf_puts(&message, "cannot start delegated Sirio: ");
+        agent_buf_puts(&message, "cannot start subprocess agent: ");
         agent_buf_puts(&message, error[0] ? error : "unknown error");
         char *detail = agent_buf_take(&message);
-        char *result = worker_sirio_tool_error(detail);
+        char *result = worker_subprocess_tool_error(detail);
         free(detail);
         return result;
     }
@@ -1247,7 +1253,7 @@ static char *worker_execute_sirio_tool(agent_worker *worker,
     agent_buf stdout_capture = {0};
     agent_buf stderr_capture = {0};
     int status = 0;
-    int wait_status = worker_wait_for_sirio(
+    int wait_status = worker_wait_for_subprocess(
         worker, pid, stdout_fd, stderr_fd,
         &stdout_capture, &stderr_capture, &status,
         error, sizeof(error));
@@ -1255,7 +1261,7 @@ static char *worker_execute_sirio_tool(agent_worker *worker,
     char *stderr_text = worker_capture_take(&stderr_capture);
     if (wait_status != 0) {
         agent_buf message = {0};
-        agent_buf_puts(&message, "delegated Sirio failed: ");
+        agent_buf_puts(&message, "subprocess agent failed: ");
         agent_buf_puts(&message, error[0] ? error : "unknown error");
         if (stderr_text[0]) {
             agent_buf_puts(&message, "\n");
@@ -1264,7 +1270,7 @@ static char *worker_execute_sirio_tool(agent_worker *worker,
         free(stdout_text);
         free(stderr_text);
         char *detail = agent_buf_take(&message);
-        char *result = worker_sirio_tool_error(detail);
+        char *result = worker_subprocess_tool_error(detail);
         free(detail);
         return result;
     }
@@ -1273,25 +1279,25 @@ static char *worker_execute_sirio_tool(agent_worker *worker,
         free(stderr_text);
         if (stdout_text[0]) return stdout_text;
         free(stdout_text);
-        return xstrdup("Delegated Sirio completed without output.\n");
+        return xstrdup("Subprocess completed without output.\n");
     }
 
     agent_buf failure = {0};
     if (WIFEXITED(status)) {
         char status_text[96];
         snprintf(status_text, sizeof(status_text),
-                 "Tool error: delegated Sirio exited with status %d\n",
+                 "Tool error: subprocess exited with status %d\n",
                  WEXITSTATUS(status));
         agent_buf_puts(&failure, status_text);
     } else if (WIFSIGNALED(status)) {
         char signal_text[96];
         snprintf(signal_text, sizeof(signal_text),
-                 "Tool error: delegated Sirio terminated by signal %d\n",
+                 "Tool error: subprocess terminated by signal %d\n",
                  WTERMSIG(status));
         agent_buf_puts(&failure, signal_text);
     } else {
         agent_buf_puts(&failure,
-                       "Tool error: delegated Sirio did not complete\n");
+                       "Tool error: subprocess did not complete\n");
     }
     if (stderr_text[0]) {
         agent_buf_puts(&failure, "stderr:\n");
@@ -1352,8 +1358,8 @@ static char *worker_execute_external_tool(agent_worker *w,
                                           const agent_tool_call *call) {
     if (!w || !w->cfg || !call || !call->name)
         return xstrdup("Tool error: tool runtime is unavailable\n");
-    if (!strcmp(call->name, "sirio"))
-        return worker_execute_sirio_tool(w, call);
+    if (!strcmp(call->name, "subprocess"))
+        return worker_execute_subprocess_tool(w, call);
     if (!w->cfg->external_tools)
         return xstrdup("Tool error: container runner is unavailable\n");
 

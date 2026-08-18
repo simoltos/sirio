@@ -1073,6 +1073,8 @@ static void test_every_native_tool_has_a_working_portable_schema(void) {
     };
     SIRIO_TEST_ASSERT(SIRIO_NATIVE_TOOL_COUNT ==
                       sizeof(valid_arguments) / sizeof(valid_arguments[0]));
+    SIRIO_TEST_ASSERT(worker_native_tool_find("subprocess") != NULL);
+    SIRIO_TEST_ASSERT(worker_native_tool_find("sirio") == NULL);
     for (size_t i = 0; i < SIRIO_NATIVE_TOOL_COUNT; i++) {
         sirio_tool_call native = {
             .id = "schema-check",
@@ -1090,13 +1092,13 @@ static void test_every_native_tool_has_a_working_portable_schema(void) {
     }
 }
 
-static void test_sirio_tool_runs_on_the_host(void) {
-    const char *old_child_env = getenv("SIRIO_TEST_SUBAGENT_CHILD");
-    const char *old_depth_env = getenv(SIRIO_SUBAGENT_DEPTH_ENV);
+static void test_subprocess_tool_runs_on_the_host(void) {
+    const char *old_child_env = getenv("SIRIO_TEST_SUBPROCESS_CHILD");
+    const char *old_depth_env = getenv(SIRIO_SUBPROCESS_DEPTH_ENV);
     char *old_child = old_child_env ? xstrdup(old_child_env) : NULL;
     char *old_depth = old_depth_env ? xstrdup(old_depth_env) : NULL;
-    SIRIO_TEST_ASSERT(setenv("SIRIO_TEST_SUBAGENT_CHILD", "1", 1) == 0);
-    SIRIO_TEST_ASSERT(setenv(SIRIO_SUBAGENT_DEPTH_ENV, "0", 1) == 0);
+    SIRIO_TEST_ASSERT(setenv("SIRIO_TEST_SUBPROCESS_CHILD", "1", 1) == 0);
+    SIRIO_TEST_ASSERT(setenv(SIRIO_SUBPROCESS_DEPTH_ENV, "0", 1) == 0);
 
     agent_worker worker;
     test_worker_init(&worker);
@@ -1104,9 +1106,9 @@ static void test_sirio_tool_runs_on_the_host(void) {
     sirio_config_defaults(&config);
     config.executable_path = sirio_test_program_path;
     sirio_engine engine = {
-        .provider = SIRIO_PROVIDER_DEEPSEEK,
+        .provider = SIRIO_PROVIDER_OPENCODE_GO,
         .model = sirio_model_find_for_provider(
-            SIRIO_PROVIDER_DEEPSEEK, "deepseek-v4-flash"),
+            SIRIO_PROVIDER_OPENCODE_GO, "deepseek-v4-flash"),
         .reasoning = SIRIO_REASONING_NONE,
     };
     snprintf(engine.alias, sizeof(engine.alias), "dflash");
@@ -1115,7 +1117,7 @@ static void test_sirio_tool_runs_on_the_host(void) {
 
     sirio_tool_call native = {
         .id = "delegate-call",
-        .name = "sirio",
+        .name = "subprocess",
         .arguments_json = "{\"prompt\":\"delegated task\"}",
     };
     agent_tool_call call = {0};
@@ -1129,6 +1131,16 @@ static void test_sirio_tool_runs_on_the_host(void) {
     free(result);
     worker_tool_call_free(&call);
 
+    native.arguments_json =
+        "{\"prompt\":\"specialist\",\"model\":\"openai/gpt-5.6-sol\","
+        "\"reasoning\":\"high\"}";
+    SIRIO_TEST_ASSERT(worker_native_call_convert(
+        &native, &call, error, sizeof(error)));
+    result = worker_execute_external_tool(&worker, &call);
+    SIRIO_TEST_ASSERT(result && !strcmp(result, "specialist answer\n"));
+    free(result);
+    worker_tool_call_free(&call);
+
     native.arguments_json = "{\"prompt\":\"fail\"}";
     SIRIO_TEST_ASSERT(worker_native_call_convert(
         &native, &call, error, sizeof(error)));
@@ -1139,7 +1151,7 @@ static void test_sirio_tool_runs_on_the_host(void) {
     free(result);
     worker_tool_call_free(&call);
 
-    SIRIO_TEST_ASSERT(setenv(SIRIO_SUBAGENT_DEPTH_ENV, "4", 1) == 0);
+    SIRIO_TEST_ASSERT(setenv(SIRIO_SUBPROCESS_DEPTH_ENV, "4", 1) == 0);
     native.arguments_json = "{\"prompt\":\"too deep\"}";
     SIRIO_TEST_ASSERT(worker_native_call_convert(
         &native, &call, error, sizeof(error)));
@@ -1150,16 +1162,16 @@ static void test_sirio_tool_runs_on_the_host(void) {
 
     test_worker_free(&worker);
     if (old_child) {
-        SIRIO_TEST_ASSERT(setenv("SIRIO_TEST_SUBAGENT_CHILD",
+        SIRIO_TEST_ASSERT(setenv("SIRIO_TEST_SUBPROCESS_CHILD",
                                  old_child, 1) == 0);
     } else {
-        SIRIO_TEST_ASSERT(unsetenv("SIRIO_TEST_SUBAGENT_CHILD") == 0);
+        SIRIO_TEST_ASSERT(unsetenv("SIRIO_TEST_SUBPROCESS_CHILD") == 0);
     }
     if (old_depth) {
-        SIRIO_TEST_ASSERT(setenv(SIRIO_SUBAGENT_DEPTH_ENV,
+        SIRIO_TEST_ASSERT(setenv(SIRIO_SUBPROCESS_DEPTH_ENV,
                                  old_depth, 1) == 0);
     } else {
-        SIRIO_TEST_ASSERT(unsetenv(SIRIO_SUBAGENT_DEPTH_ENV) == 0);
+        SIRIO_TEST_ASSERT(unsetenv(SIRIO_SUBPROCESS_DEPTH_ENV) == 0);
     }
     free(old_child);
     free(old_depth);
@@ -1708,7 +1720,9 @@ static void test_main_parses_options_before_auth(void) {
     sirio_test_capture_free(&bad);
     sirio_main_capture valid = sirio_test_capture_main(4, valid_argv, NULL);
     SIRIO_TEST_ASSERT(valid.status == 1);
-    SIRIO_TEST_ASSERT(valid.err && strstr(valid.err, "no active model"));
+    SIRIO_TEST_ASSERT(valid.err &&
+                      strstr(valid.err,
+                             "no authentication is configured for opencode-go"));
     sirio_test_capture_free(&valid);
     sirio_main_capture help = sirio_test_capture_main(2, help_argv, NULL);
     SIRIO_TEST_ASSERT(help.status == 0);
@@ -1791,11 +1805,32 @@ static void test_main_parses_options_before_auth(void) {
     };
     sirio_main_capture openai = sirio_test_capture_main(
         6, openai_argv, NULL);
-    SIRIO_TEST_ASSERT(openai.status == 1);
+    SIRIO_TEST_ASSERT(openai.status == 2);
     SIRIO_TEST_ASSERT(openai.err &&
-                      strstr(openai.err,
-                             "no authentication is configured for openai"));
+                      strstr(openai.err, "--provider is only valid"));
     sirio_test_capture_free(&openai);
+
+    char *root_specialist_argv[] = {
+        "sirio", "--model", "openai/gpt-5.6-sol",
+        "--non-interactive", "--prompt", "hello",
+    };
+    sirio_main_capture root_specialist = sirio_test_capture_main(
+        6, root_specialist_argv, NULL);
+    SIRIO_TEST_ASSERT(root_specialist.status == 2);
+    SIRIO_TEST_ASSERT(root_specialist.err &&
+                      strstr(root_specialist.err,
+                             "available only through subprocess"));
+    sirio_test_capture_free(&root_specialist);
+
+    SIRIO_TEST_ASSERT(setenv(SIRIO_SUBPROCESS_DEPTH_ENV, "1", 1) == 0);
+    sirio_main_capture subprocess_specialist = sirio_test_capture_main(
+        6, root_specialist_argv, NULL);
+    SIRIO_TEST_ASSERT(subprocess_specialist.status == 1);
+    SIRIO_TEST_ASSERT(subprocess_specialist.err &&
+                      strstr(subprocess_specialist.err,
+                             "no authentication is configured for openai"));
+    sirio_test_capture_free(&subprocess_specialist);
+    SIRIO_TEST_ASSERT(unsetenv(SIRIO_SUBPROCESS_DEPTH_ENV) == 0);
 
     if (old_home) {
         SIRIO_TEST_ASSERT(setenv("HOME", old_home, 1) == 0);
@@ -1809,6 +1844,7 @@ static void test_main_parses_options_before_auth(void) {
 static void test_main_auth_and_selection_actions(void) {
     static const char deep_secret[] = "deep-secret-for-test";
     static const char openai_secret[] = "openai-secret-for-test";
+    static const char opencode_secret[] = "opencode-secret-for-test";
     char home_template[] = "/tmp/sirio-main-actions-XXXXXX";
     char *home = mkdtemp(home_template);
     SIRIO_TEST_ASSERT(home != NULL);
@@ -1842,6 +1878,18 @@ static void test_main_auth_and_selection_actions(void) {
     SIRIO_TEST_ASSERT(openai.err && !strstr(openai.err, openai_secret));
     sirio_test_capture_free(&openai);
 
+    char *opencode_argv[] = {
+        "sirio", "auth", "--api-key", "opencode-go", "--stdin",
+    };
+    char opencode_input[64];
+    snprintf(opencode_input, sizeof(opencode_input), "%s\n", opencode_secret);
+    sirio_main_capture opencode = sirio_test_capture_main(
+        5, opencode_argv, opencode_input);
+    SIRIO_TEST_ASSERT(opencode.status == 0);
+    SIRIO_TEST_ASSERT(opencode.out && !strstr(opencode.out, opencode_secret));
+    SIRIO_TEST_ASSERT(opencode.err && !strstr(opencode.err, opencode_secret));
+    sirio_test_capture_free(&opencode);
+
     char auth_path[PATH_MAX];
     snprintf(auth_path, sizeof(auth_path), "%s/.sirio/auth.json", home);
     struct stat st;
@@ -1856,6 +1904,8 @@ static void test_main_auth_and_selection_actions(void) {
             store, SIRIO_PROVIDER_DEEPSEEK, SIRIO_AUTH_API_KEY));
         SIRIO_TEST_ASSERT(sirio_auth_store_has(
             store, SIRIO_PROVIDER_OPENAI, SIRIO_AUTH_API_KEY));
+        SIRIO_TEST_ASSERT(sirio_auth_store_has(
+            store, SIRIO_PROVIDER_OPENCODE_GO, SIRIO_AUTH_API_KEY));
         SIRIO_TEST_ASSERT(sirio_auth_store_preferred(
             store, SIRIO_PROVIDER_OPENAI) == SIRIO_AUTH_API_KEY);
         sirio_auth_store_destroy(store);
@@ -1869,6 +1919,7 @@ static void test_main_auth_and_selection_actions(void) {
     SIRIO_TEST_ASSERT(status.out && strstr(status.out, "openai"));
     SIRIO_TEST_ASSERT(!strstr(status.out, deep_secret));
     SIRIO_TEST_ASSERT(!strstr(status.out, openai_secret));
+    SIRIO_TEST_ASSERT(!strstr(status.out, opencode_secret));
     sirio_test_capture_free(&status);
 
     char *providers_argv[] = {"sirio", "catalog", "--providers"};
@@ -1877,6 +1928,7 @@ static void test_main_auth_and_selection_actions(void) {
     SIRIO_TEST_ASSERT(providers.status == 0);
     SIRIO_TEST_ASSERT(providers.out && strstr(providers.out, "deepseek"));
     SIRIO_TEST_ASSERT(providers.out && strstr(providers.out, "openai"));
+    SIRIO_TEST_ASSERT(providers.out && strstr(providers.out, "role entry"));
     sirio_test_capture_free(&providers);
 
     char *models_argv[] = {
@@ -1887,8 +1939,24 @@ static void test_main_auth_and_selection_actions(void) {
     SIRIO_TEST_ASSERT(models.status == 0);
     SIRIO_TEST_ASSERT(models.out && strstr(models.out, "gpt-5.6-luna"));
     SIRIO_TEST_ASSERT(models.out && strstr(models.out, "active true"));
+    SIRIO_TEST_ASSERT(models.out && strstr(models.out, "scope subprocess"));
     SIRIO_TEST_ASSERT(!strstr(models.out, "deepseek-v4-flash"));
     sirio_test_capture_free(&models);
+
+    char *entry_models_argv[] = {
+        "sirio", "catalog", "--models", "--provider", "opencode-go",
+    };
+    sirio_main_capture entry_models = sirio_test_capture_main(
+        5, entry_models_argv, NULL);
+    SIRIO_TEST_ASSERT(entry_models.status == 0);
+    SIRIO_TEST_ASSERT(entry_models.out &&
+                      strstr(entry_models.out, "deepseek-v4-flash"));
+    SIRIO_TEST_ASSERT(entry_models.out &&
+                      strstr(entry_models.out, "scope entry"));
+    SIRIO_TEST_ASSERT(entry_models.out && strstr(entry_models.out, "glm-5.3"));
+    SIRIO_TEST_ASSERT(entry_models.out &&
+                      strstr(entry_models.out, "scope subprocess"));
+    sirio_test_capture_free(&entry_models);
 
     char *models_global_first_argv[] = {
         "sirio", "--provider", "openai", "catalog", "--models",
@@ -1937,13 +2005,21 @@ static void test_main_auth_and_selection_actions(void) {
     }
 
     char *conflict_argv[] = {
-        "sirio", "--provider", "deepseek", "--model", "gpt-5.6-luna",
+        "sirio", "--model", "openai/gpt-5.6-luna",
     };
     sirio_main_capture conflict = sirio_test_capture_main(
-        5, conflict_argv, NULL);
+        3, conflict_argv, NULL);
     SIRIO_TEST_ASSERT(conflict.status == 2);
-    SIRIO_TEST_ASSERT(conflict.err && strstr(conflict.err, "conflicts"));
+    SIRIO_TEST_ASSERT(conflict.err &&
+                      strstr(conflict.err, "available only through subprocess"));
     sirio_test_capture_free(&conflict);
+
+    char *glm_argv[] = {"sirio", "--model", "glm"};
+    sirio_main_capture glm = sirio_test_capture_main(3, glm_argv, NULL);
+    SIRIO_TEST_ASSERT(glm.status == 2);
+    SIRIO_TEST_ASSERT(glm.err &&
+                      strstr(glm.err, "available only through subprocess"));
+    sirio_test_capture_free(&glm);
 
     char *bad_stdin_argv[] = {
         "sirio", "auth", "--api-key", "openai", "--stdin", "--yes",
@@ -1982,11 +2058,13 @@ static void test_main_auth_and_selection_actions(void) {
     SIRIO_TEST_ASSERT(inactive_models != NULL);
     if (inactive_models) {
         static const char inactive_json[] =
-            "{\"deepseek\":["
+            "{\"opencode-go\":["
             "{\"id\":\"deepseek-v4-flash\",\"alias\":\"flash\","
             "\"last_effort\":\"high\",\"active\":false},"
             "{\"id\":\"deepseek-v4-pro\",\"alias\":\"pro\","
-            "\"last_effort\":\"high\",\"active\":false}],"
+            "\"last_effort\":\"high\",\"active\":false},"
+            "{\"id\":\"glm-5.3\",\"alias\":\"glm\","
+            "\"last_effort\":\"high\",\"active\":true}],"
             "\"last_used\":{}}\n";
         SIRIO_TEST_ASSERT(fwrite(inactive_json, 1,
                                  sizeof(inactive_json) - 1,
@@ -1995,7 +2073,7 @@ static void test_main_auth_and_selection_actions(void) {
         SIRIO_TEST_ASSERT(fclose(inactive_models) == 0);
     }
     char *inactive_list_argv[] = {
-        "sirio", "catalog", "--models", "--provider", "deepseek",
+        "sirio", "catalog", "--models", "--provider", "opencode-go",
     };
     sirio_main_capture inactive_list = sirio_test_capture_main(
         5, inactive_list_argv, NULL);
@@ -2004,14 +2082,13 @@ static void test_main_auth_and_selection_actions(void) {
                       strstr(inactive_list.out, "active false"));
     sirio_test_capture_free(&inactive_list);
     char *inactive_argv[] = {
-        "sirio", "--provider", "deepseek", "--non-interactive",
-        "--prompt", "hello",
+        "sirio", "--non-interactive", "--prompt", "hello",
     };
     sirio_main_capture inactive = sirio_test_capture_main(
-        6, inactive_argv, NULL);
+        4, inactive_argv, NULL);
     SIRIO_TEST_ASSERT(inactive.status == 2);
     SIRIO_TEST_ASSERT(inactive.err &&
-                      strstr(inactive.err, "no active model for provider"));
+                      strstr(inactive.err, "no active entry model for provider"));
     sirio_test_capture_free(&inactive);
 
     SIRIO_TEST_ASSERT(unlink(auth_path) == 0);
@@ -2543,7 +2620,7 @@ static void test_cloud_help_is_accurate(void) {
     SIRIO_TEST_ASSERT(strstr(text, "  auth") != NULL);
     SIRIO_TEST_ASSERT(strstr(text, "  catalog") != NULL);
     SIRIO_TEST_ASSERT(strstr(text, "  sessions") != NULL);
-    SIRIO_TEST_ASSERT(strstr(text, "--provider") != NULL);
+    SIRIO_TEST_ASSERT(strstr(text, "--provider") == NULL);
     SIRIO_TEST_ASSERT(strstr(text, "--ctx") == NULL);
     SIRIO_TEST_ASSERT(strstr(text, "Default: provider limit") != NULL);
     SIRIO_TEST_ASSERT(strstr(text, "--default-provider") == NULL);
@@ -2737,15 +2814,24 @@ static void test_exit_save_decision_paths(void) {
     SIRIO_TEST_ASSERT(rmdir(dir) == 0);
 }
 
-static int sirio_test_subagent_child(int argc, char **argv) {
-    const char *depth = getenv(SIRIO_SUBAGENT_DEPTH_ENV);
+static int sirio_test_subprocess_child(int argc, char **argv) {
+    const char *depth = getenv(SIRIO_SUBPROCESS_DEPTH_ENV);
+    bool specialist = argc == 8 && !strcmp(argv[7], "specialist");
+    const char *expected_model = specialist ? "openai/gpt-5.6-sol" :
+                                               "opencode-go/deepseek-v4-flash";
+    const char *expected_reasoning = specialist ? "high" : "none";
     if (argc != 8 || strcmp(argv[1], "--model") ||
-        strcmp(argv[2], "deepseek/deepseek-v4-flash") ||
+        strcmp(argv[2], expected_model) ||
         strcmp(argv[3], "--think") ||
-        strcmp(argv[4], "none") || strcmp(argv[5], "--non-interactive") ||
+        strcmp(argv[4], expected_reasoning) ||
+        strcmp(argv[5], "--non-interactive") ||
         strcmp(argv[6], "-p") || !depth || strcmp(depth, "1")) {
-        fputs("unexpected delegated Sirio arguments\n", stderr);
+        fputs("unexpected subprocess arguments\n", stderr);
         return 9;
+    }
+    if (specialist) {
+        fputs("specialist answer\n", stdout);
+        return 0;
     }
     if (!strcmp(argv[7], "fail")) {
         fputs("partial answer\n", stdout);
@@ -2753,7 +2839,7 @@ static int sirio_test_subagent_child(int argc, char **argv) {
         return 7;
     }
     if (strcmp(argv[7], "delegated task")) {
-        fputs("unexpected delegated Sirio prompt\n", stderr);
+        fputs("unexpected subprocess prompt\n", stderr);
         return 9;
     }
     fputs("delegated answer\n", stdout);
@@ -2762,8 +2848,8 @@ static int sirio_test_subagent_child(int argc, char **argv) {
 }
 
 int main(int argc, char **argv) {
-    if (getenv("SIRIO_TEST_SUBAGENT_CHILD"))
-        return sirio_test_subagent_child(argc, argv);
+    if (getenv("SIRIO_TEST_SUBPROCESS_CHILD"))
+        return sirio_test_subprocess_child(argc, argv);
     char *resolved_program_path = realpath(argv[0], NULL);
     sirio_test_program_path = resolved_program_path ?
                               resolved_program_path : argv[0];
@@ -2781,7 +2867,7 @@ int main(int argc, char **argv) {
     test_cloud_context_injections();
     test_native_argument_contract_validation();
     test_every_native_tool_has_a_working_portable_schema();
-    test_sirio_tool_runs_on_the_host();
+    test_subprocess_tool_runs_on_the_host();
     test_thinking_tool_calls_allow_direct_calls();
     test_provider_usage_anchors_context_accounting();
     test_native_multi_tool_round_preserves_provider_order();

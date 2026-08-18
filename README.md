@@ -32,15 +32,19 @@ build cache; pruning them frees disk space but can make the next build slower.
 Save credentials once:
 
 ```sh
+./sirio auth --api-key opencode-go
 ./sirio auth --api-key deepseek
 ./sirio auth --login openai
-./sirio auth --api-key opencode-go
 ./sirio auth --api-key kimi
 ```
 
-Use `./sirio catalog --models` to inspect the current catalog. Without an
-explicit model, Sirio reuses the last one selected for that provider; without
-a provider, it reuses the last global selection.
+Sirio's entry provider is `opencode-go`. Normal runs use its DeepSeek Flash or
+Pro models; without an explicit model, Sirio reuses the last active entry model
+and otherwise starts with Flash. Other models and providers remain available
+to delegated agent processes.
+
+Use `./sirio catalog --models` to inspect the current catalog and whether each
+model has `entry` or `subprocess` scope.
 
 Set `active` in `~/.sirio/models.json` to enable or disable catalog models.
 
@@ -52,9 +56,8 @@ Then start the interface, or run one prompt:
 ./sirio --non-interactive -p "Explain this repository"
 ```
 
-A provider is fixed for the lifetime of a conversation. `/model` selects only
-models from that provider; loading a saved session with `/switch` restores the
-provider saved with that session.
+The entry provider is fixed for the lifetime of a normal conversation.
+`/model` selects only its active DeepSeek entry models.
 
 List or resume saved sessions with `./sirio sessions --list` and
 `./sirio sessions --resume <id>`. See `./sirio sessions --help` for deletion
@@ -63,8 +66,10 @@ and canonical rewriting.
 `./sirio --help` lists the available options. `make test` runs the tests and
 `make sanitize` repeats them with ASan and UBSan.
 
-Agents can delegate work to another host-side Sirio process with inherited
-workspace, configuration and authentication.
+Agents can use the `subprocess` tool to delegate focused work to another
+host-side agent process with inherited workspace, configuration and
+authentication. The optional `model` argument selects any active catalog model
+using `provider/model`; omitting it inherits the current model.
 
 The selected workspace is mounted read-write in the tool container. Content
 included in prompts or tool results is sent to the configured model provider.

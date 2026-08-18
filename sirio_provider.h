@@ -103,6 +103,8 @@ typedef struct {
     const char *name;
     const char *default_alias;
     sirio_provider provider;
+    /* Eligible for a normal run when served by sirio_provider_default(). */
+    bool entrypoint;
     int context_tokens;
     int max_output_tokens;
     unsigned reasoning_mask;
@@ -114,12 +116,14 @@ const sirio_provider_info *sirio_provider_at(size_t index);
 const sirio_provider_info *sirio_provider_get(sirio_provider provider);
 const sirio_provider_info *sirio_provider_find(const char *name);
 const char *sirio_provider_name(sirio_provider provider);
+sirio_provider sirio_provider_default(void);
 
 size_t sirio_model_count(void);
 const sirio_model_info *sirio_model_at(size_t index);
 const sirio_model_info *sirio_model_find(const char *name);
 const sirio_model_info *sirio_model_find_for_provider(
     sirio_provider provider, const char *name);
+bool sirio_model_is_entrypoint(const sirio_model_info *model);
 const char *sirio_reasoning_name(sirio_reasoning_effort effort);
 bool sirio_reasoning_parse(const char *name,
                            sirio_reasoning_effort *effort_out);

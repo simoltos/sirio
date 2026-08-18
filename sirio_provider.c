@@ -119,6 +119,7 @@ static const sirio_model_info model_catalog[] = {
         .name = DEEPSEEK_MODEL,
         .default_alias = "flash",
         .provider = SIRIO_PROVIDER_DEEPSEEK,
+        .entrypoint = true,
         .context_tokens = SIRIO_MODEL_CONTEXT_TOKENS,
         .max_output_tokens = SIRIO_MODEL_MAX_OUTPUT_TOKENS,
         .reasoning_mask = SIRIO_REASONING_BIT(SIRIO_REASONING_NONE) |
@@ -130,6 +131,7 @@ static const sirio_model_info model_catalog[] = {
         .name = DEEPSEEK_PRO_MODEL,
         .default_alias = "pro",
         .provider = SIRIO_PROVIDER_DEEPSEEK,
+        .entrypoint = true,
         .context_tokens = SIRIO_MODEL_CONTEXT_TOKENS,
         .max_output_tokens = SIRIO_MODEL_MAX_OUTPUT_TOKENS,
         .reasoning_mask = SIRIO_REASONING_BIT(SIRIO_REASONING_NONE) |
@@ -180,6 +182,7 @@ static const sirio_model_info model_catalog[] = {
         .name = OPENCODE_GO_MODEL,
         .default_alias = "flash",
         .provider = SIRIO_PROVIDER_OPENCODE_GO,
+        .entrypoint = true,
         .context_tokens = SIRIO_MODEL_CONTEXT_TOKENS,
         .max_output_tokens = SIRIO_MODEL_MAX_OUTPUT_TOKENS,
         .reasoning_mask = SIRIO_REASONING_BIT(SIRIO_REASONING_LOW) |
@@ -191,6 +194,7 @@ static const sirio_model_info model_catalog[] = {
         .name = DEEPSEEK_PRO_MODEL,
         .default_alias = "pro",
         .provider = SIRIO_PROVIDER_OPENCODE_GO,
+        .entrypoint = true,
         .context_tokens = SIRIO_MODEL_CONTEXT_TOKENS,
         .max_output_tokens = SIRIO_MODEL_MAX_OUTPUT_TOKENS,
         .reasoning_mask = SIRIO_REASONING_BIT(SIRIO_REASONING_HIGH) |
@@ -267,6 +271,10 @@ const char *sirio_provider_name(sirio_provider provider) {
     return info ? info->name : "unknown";
 }
 
+sirio_provider sirio_provider_default(void) {
+    return SIRIO_PROVIDER_OPENCODE_GO;
+}
+
 size_t sirio_model_count(void) {
     return sizeof(model_catalog) / sizeof(model_catalog[0]);
 }
@@ -293,6 +301,11 @@ const sirio_model_info *sirio_model_find_for_provider(
         if (model_catalog[i].provider == provider &&
             !strcmp(model_catalog[i].name, name)) return &model_catalog[i];
     return NULL;
+}
+
+bool sirio_model_is_entrypoint(const sirio_model_info *model) {
+    return model && model->entrypoint &&
+           model->provider == sirio_provider_default();
 }
 
 const char *sirio_reasoning_name(sirio_reasoning_effort effort) {

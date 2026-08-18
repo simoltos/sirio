@@ -434,6 +434,10 @@ static void test_invalid_generation_options(void) {
 static void test_model_catalog_capabilities(void) {
     const sirio_model_info *flash = sirio_model_find_for_provider(
         SIRIO_PROVIDER_DEEPSEEK, DEEPSEEK_MODEL);
+    const sirio_model_info *go_flash = sirio_model_find_for_provider(
+        SIRIO_PROVIDER_OPENCODE_GO, OPENCODE_GO_MODEL);
+    const sirio_model_info *go_pro = sirio_model_find_for_provider(
+        SIRIO_PROVIDER_OPENCODE_GO, DEEPSEEK_PRO_MODEL);
     const sirio_model_info *sol = sirio_model_find("gpt-5.6-sol");
     const sirio_model_info *terra = sirio_model_find("gpt-5.6-terra");
     const sirio_model_info *luna = sirio_model_find(OPENAI_MODEL);
@@ -446,8 +450,15 @@ static void test_model_catalog_capabilities(void) {
     sirio_reasoning_effort parsed = SIRIO_REASONING_NONE;
     sirio_reasoning_effort next = SIRIO_REASONING_NONE;
 
-    TEST_ASSERT(flash != NULL && sol != NULL && terra != NULL && luna != NULL);
+    TEST_ASSERT(flash != NULL && go_flash != NULL && go_pro != NULL);
+    TEST_ASSERT(sol != NULL && terra != NULL && luna != NULL);
     TEST_ASSERT(go_glm != NULL && kimi_k3 != NULL && kimi_coding != NULL);
+    TEST_ASSERT(sirio_provider_default() == SIRIO_PROVIDER_OPENCODE_GO);
+    TEST_ASSERT(go_flash && sirio_model_is_entrypoint(go_flash));
+    TEST_ASSERT(go_pro && sirio_model_is_entrypoint(go_pro));
+    TEST_ASSERT(flash && !sirio_model_is_entrypoint(flash));
+    TEST_ASSERT(go_glm && !sirio_model_is_entrypoint(go_glm));
+    TEST_ASSERT(sol && !sirio_model_is_entrypoint(sol));
     TEST_ASSERT(sol && sol->context_tokens == OPENAI_MODEL_CONTEXT_TOKENS);
     TEST_ASSERT(terra && terra->default_reasoning == SIRIO_REASONING_MEDIUM);
     TEST_ASSERT(luna && luna->default_reasoning == SIRIO_REASONING_LOW);
