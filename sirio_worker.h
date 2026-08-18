@@ -42,7 +42,6 @@ struct sirio_engine {
     sirio_bridge *bridge;
     sirio_provider provider;
     const sirio_model_info *model;
-    char alias[64];
     sirio_reasoning_effort reasoning;
     sirio_generation_options generation;
     sirio_bridge_cancel_poll cancel_poll;

@@ -157,7 +157,7 @@ static const char sirio_native_prompt_tail[] =
     "running, use bash_status to inspect new output or bash_stop to terminate "
     "it. Use subprocess to delegate a focused, self-contained task to another "
     "agent process; it runs on the host in the same workspace and starts its "
-    "own tool container. Models outside the DeepSeek entry points are available "
+    "own tool container. Models outside the configured base interface are available "
     "only through subprocess; use provider/model when selecting one. Use "
     "google_search to discover pages and visit_page to read a "
     "known URL; the first web action may require permission to start a visible "
@@ -1203,8 +1203,6 @@ static char *worker_execute_subprocess_tool(agent_worker *worker,
                      provider, worker->engine->model->name) : -1;
         if (length > 0 && (size_t)length < sizeof(inherited_model)) {
             model = inherited_model;
-        } else if (worker->engine->alias[0]) {
-            model = worker->engine->alias;
         }
     }
     if (!model || !model[0])
@@ -2131,7 +2129,6 @@ static void agent_worker_finish_model_change(agent_worker *w,
 static bool agent_worker_select_model_internal(agent_worker *w,
                                                const char *model,
                                                const char *reasoning,
-                                               bool restore_provider,
                                                char *err, size_t err_len) {
     if (!w || !w->engine || !w->engine->select) {
         worker_copy_err(err, err_len, "runtime model selection is unavailable");
@@ -2146,32 +2143,8 @@ static bool agent_worker_select_model_internal(agent_worker *w,
         return false;
     }
 
-    char selection[192];
-    const char *selected = model;
-    if (!restore_provider) {
-        const char *provider_name = sirio_provider_name(w->engine->provider);
-        const char *slash = strchr(model, '/');
-        if (slash) {
-            size_t provider_len = (size_t)(slash - model);
-            if (strlen(provider_name) != provider_len ||
-                strncmp(model, provider_name, provider_len)) {
-                worker_copy_err(
-                    err, err_len,
-                    "model provider differs from the current session provider");
-                return false;
-            }
-        } else {
-            int length = snprintf(selection, sizeof(selection), "%s/%s",
-                                  provider_name, model);
-            if (length < 0 || (size_t)length >= sizeof(selection)) {
-                worker_copy_err(err, err_len, "model selection is too long");
-                return false;
-            }
-            selected = selection;
-        }
-    }
     const sirio_model_info *old_model = w->engine->model;
-    if (w->engine->select(w->engine, selected, reasoning, err, err_len) != 0)
+    if (w->engine->select(w->engine, model, reasoning, err, err_len) != 0)
         return false;
     agent_worker_finish_model_change(w, old_model);
     return true;
@@ -2181,7 +2154,7 @@ bool agent_worker_select_model(agent_worker *w, const char *model,
                                const char *reasoning,
                                char *err, size_t err_len) {
     return agent_worker_select_model_internal(
-        w, model, reasoning, false, err, err_len);
+        w, model, reasoning, err, err_len);
 }
 
 bool agent_worker_step_model(agent_worker *w, int direction,
@@ -3531,7 +3504,7 @@ static bool agent_worker_load_session(agent_worker *w, const char *prefix,
                               data.provider, data.model);
         if (length < 0 || (size_t)length >= sizeof(selection) ||
             !agent_worker_select_model_internal(
-                w, selection, data.reasoning, true, err, err_len))
+                w, selection, data.reasoning, err, err_len))
             ok = false;
     }
     if (!ok) {
@@ -3742,7 +3715,6 @@ static void worker_status_selection_locked(agent_worker *w) {
     snprintf(w->status.provider, sizeof(w->status.provider), "%s",
              sirio_provider_name(w->engine->provider));
     snprintf(w->status.model, sizeof(w->status.model), "%s",
-             w->engine->alias[0] ? w->engine->alias :
              w->engine->model ? w->engine->model->name : "unknown");
     snprintf(w->status.reasoning, sizeof(w->status.reasoning), "%s",
              sirio_reasoning_name(w->engine->reasoning));

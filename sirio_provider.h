@@ -101,10 +101,7 @@ typedef struct {
 
 typedef struct {
     const char *name;
-    const char *default_alias;
     sirio_provider provider;
-    /* Eligible for a normal run when served by sirio_provider_default(). */
-    bool entrypoint;
     int context_tokens;
     int max_output_tokens;
     unsigned reasoning_mask;
@@ -116,14 +113,12 @@ const sirio_provider_info *sirio_provider_at(size_t index);
 const sirio_provider_info *sirio_provider_get(sirio_provider provider);
 const sirio_provider_info *sirio_provider_find(const char *name);
 const char *sirio_provider_name(sirio_provider provider);
-sirio_provider sirio_provider_default(void);
 
 size_t sirio_model_count(void);
 const sirio_model_info *sirio_model_at(size_t index);
 const sirio_model_info *sirio_model_find(const char *name);
 const sirio_model_info *sirio_model_find_for_provider(
     sirio_provider provider, const char *name);
-bool sirio_model_is_entrypoint(const sirio_model_info *model);
 const char *sirio_reasoning_name(sirio_reasoning_effort effort);
 bool sirio_reasoning_parse(const char *name,
                            sirio_reasoning_effort *effort_out);
@@ -134,10 +129,10 @@ bool sirio_model_step_reasoning(const sirio_model_info *model,
                                 int direction,
                                 sirio_reasoning_effort *next_out);
 
-/* User-editable model selection state. models.json contains catalog model ids,
- * aliases, active state, the last effort used per model, and the global and
- * per-provider last selections. Model capabilities remain authoritative in
- * the catalog above and cannot be changed through this file. */
+/* User-created model selection state. models.json is authoritative for which
+ * catalog models are configured, which belong to the base interface, their
+ * active state and last effort, and the interface's single last selection.
+ * Model capabilities remain authoritative in the compiled provider catalog. */
 typedef struct sirio_model_store sirio_model_store;
 
 sirio_model_store *sirio_model_store_load(const char *path,
@@ -150,26 +145,27 @@ size_t sirio_model_store_count(const sirio_model_store *store,
 const sirio_model_info *sirio_model_store_at(const sirio_model_store *store,
                                              sirio_provider provider,
                                              size_t index,
-                                             const char **alias_out,
                                              sirio_reasoning_effort *effort_out,
                                              bool *active_out);
 const sirio_model_info *sirio_model_store_first_active(
     const sirio_model_store *store, sirio_provider provider,
-    const char **alias_out, sirio_reasoning_effort *effort_out);
+    sirio_reasoning_effort *effort_out);
 const sirio_model_info *sirio_model_store_resolve(
     const sirio_model_store *store, sirio_provider provider_hint,
-    const char *name, const char **alias_out,
+    const char *name, char *error, size_t error_len);
+size_t sirio_model_store_interface_count(const sirio_model_store *store);
+const sirio_model_info *sirio_model_store_interface_at(
+    const sirio_model_store *store, size_t index,
+    sirio_reasoning_effort *effort_out, bool *active_out);
+bool sirio_model_store_is_interface_model(
+    const sirio_model_store *store, const sirio_model_info *model);
+const sirio_model_info *sirio_model_store_resolve_interface(
+    const sirio_model_store *store, const char *name,
     char *error, size_t error_len);
-const char *sirio_model_store_alias(const sirio_model_store *store,
-                                    const sirio_model_info *model);
 sirio_reasoning_effort sirio_model_store_effort(
     const sirio_model_store *store, const sirio_model_info *model);
 bool sirio_model_store_last_used(const sirio_model_store *store,
-                                 sirio_provider *provider_out,
                                  const sirio_model_info **model_out);
-bool sirio_model_store_last_used_for_provider(
-    const sirio_model_store *store, sirio_provider provider,
-    const sirio_model_info **model_out);
 int sirio_model_store_set_last_used(sirio_model_store *store,
                                     const sirio_model_info *model,
                                     sirio_reasoning_effort effort);

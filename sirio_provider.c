@@ -117,21 +117,18 @@ static const sirio_provider_info provider_catalog[] = {
 static const sirio_model_info model_catalog[] = {
     {
         .name = DEEPSEEK_MODEL,
-        .default_alias = "flash",
         .provider = SIRIO_PROVIDER_DEEPSEEK,
-        .entrypoint = true,
         .context_tokens = SIRIO_MODEL_CONTEXT_TOKENS,
         .max_output_tokens = SIRIO_MODEL_MAX_OUTPUT_TOKENS,
         .reasoning_mask = SIRIO_REASONING_BIT(SIRIO_REASONING_NONE) |
+                          SIRIO_REASONING_BIT(SIRIO_REASONING_LOW) |
                           SIRIO_REASONING_BIT(SIRIO_REASONING_HIGH) |
                           SIRIO_REASONING_BIT(SIRIO_REASONING_MAX),
         .default_reasoning = SIRIO_REASONING_HIGH,
     },
     {
         .name = DEEPSEEK_PRO_MODEL,
-        .default_alias = "pro",
         .provider = SIRIO_PROVIDER_DEEPSEEK,
-        .entrypoint = true,
         .context_tokens = SIRIO_MODEL_CONTEXT_TOKENS,
         .max_output_tokens = SIRIO_MODEL_MAX_OUTPUT_TOKENS,
         .reasoning_mask = SIRIO_REASONING_BIT(SIRIO_REASONING_NONE) |
@@ -141,7 +138,6 @@ static const sirio_model_info model_catalog[] = {
     },
     {
         .name = "gpt-5.6-sol",
-        .default_alias = "sol",
         .provider = SIRIO_PROVIDER_OPENAI,
         .context_tokens = OPENAI_MODEL_CONTEXT_TOKENS,
         .max_output_tokens = 128000,
@@ -154,7 +150,6 @@ static const sirio_model_info model_catalog[] = {
     },
     {
         .name = "gpt-5.6-terra",
-        .default_alias = "terra",
         .provider = SIRIO_PROVIDER_OPENAI,
         .context_tokens = OPENAI_MODEL_CONTEXT_TOKENS,
         .max_output_tokens = 128000,
@@ -167,7 +162,6 @@ static const sirio_model_info model_catalog[] = {
     },
     {
         .name = OPENAI_MODEL,
-        .default_alias = "luna",
         .provider = SIRIO_PROVIDER_OPENAI,
         .context_tokens = OPENAI_MODEL_CONTEXT_TOKENS,
         .max_output_tokens = 128000,
@@ -180,21 +174,18 @@ static const sirio_model_info model_catalog[] = {
     },
     {
         .name = OPENCODE_GO_MODEL,
-        .default_alias = "flash",
         .provider = SIRIO_PROVIDER_OPENCODE_GO,
-        .entrypoint = true,
         .context_tokens = SIRIO_MODEL_CONTEXT_TOKENS,
         .max_output_tokens = SIRIO_MODEL_MAX_OUTPUT_TOKENS,
-        .reasoning_mask = SIRIO_REASONING_BIT(SIRIO_REASONING_LOW) |
+        .reasoning_mask = SIRIO_REASONING_BIT(SIRIO_REASONING_NONE) |
+                          SIRIO_REASONING_BIT(SIRIO_REASONING_LOW) |
                           SIRIO_REASONING_BIT(SIRIO_REASONING_HIGH) |
                           SIRIO_REASONING_BIT(SIRIO_REASONING_MAX),
-        .default_reasoning = SIRIO_REASONING_HIGH,
+        .default_reasoning = SIRIO_REASONING_NONE,
     },
     {
         .name = DEEPSEEK_PRO_MODEL,
-        .default_alias = "pro",
         .provider = SIRIO_PROVIDER_OPENCODE_GO,
-        .entrypoint = true,
         .context_tokens = SIRIO_MODEL_CONTEXT_TOKENS,
         .max_output_tokens = SIRIO_MODEL_MAX_OUTPUT_TOKENS,
         .reasoning_mask = SIRIO_REASONING_BIT(SIRIO_REASONING_HIGH) |
@@ -203,7 +194,6 @@ static const sirio_model_info model_catalog[] = {
     },
     {
         .name = OPENCODE_GO_GLM_MODEL,
-        .default_alias = "glm",
         .provider = SIRIO_PROVIDER_OPENCODE_GO,
         .context_tokens = 1000000,
         .max_output_tokens = 131072,
@@ -214,7 +204,6 @@ static const sirio_model_info model_catalog[] = {
     },
     {
         .name = KIMI_MODEL,
-        .default_alias = "k3",
         .provider = SIRIO_PROVIDER_KIMI,
         .context_tokens = KIMI_CONTEXT_TOKENS,
         .max_output_tokens = 131072,
@@ -225,7 +214,6 @@ static const sirio_model_info model_catalog[] = {
     },
     {
         .name = KIMI_256K_MODEL,
-        .default_alias = "k3-256",
         .provider = SIRIO_PROVIDER_KIMI,
         .context_tokens = KIMI_CONTEXT_TOKENS,
         .max_output_tokens = 131072,
@@ -236,7 +224,6 @@ static const sirio_model_info model_catalog[] = {
     },
     {
         .name = KIMI_CODING_MODEL,
-        .default_alias = "coding",
         .provider = SIRIO_PROVIDER_KIMI,
         .context_tokens = KIMI_CONTEXT_TOKENS,
         .max_output_tokens = 32768,
@@ -271,10 +258,6 @@ const char *sirio_provider_name(sirio_provider provider) {
     return info ? info->name : "unknown";
 }
 
-sirio_provider sirio_provider_default(void) {
-    return SIRIO_PROVIDER_OPENCODE_GO;
-}
-
 size_t sirio_model_count(void) {
     return sizeof(model_catalog) / sizeof(model_catalog[0]);
 }
@@ -301,11 +284,6 @@ const sirio_model_info *sirio_model_find_for_provider(
         if (model_catalog[i].provider == provider &&
             !strcmp(model_catalog[i].name, name)) return &model_catalog[i];
     return NULL;
-}
-
-bool sirio_model_is_entrypoint(const sirio_model_info *model) {
-    return model && model->entrypoint &&
-           model->provider == sirio_provider_default();
 }
 
 const char *sirio_reasoning_name(sirio_reasoning_effort effort) {
@@ -3551,7 +3529,6 @@ static void auth_store_error(char *error, size_t error_len,
 
 typedef struct {
     const sirio_model_info *model;
-    char *alias;
     sirio_reasoning_effort last_effort;
     bool active;
 } sirio_model_entry;
@@ -3560,17 +3537,12 @@ struct sirio_model_store {
     sirio_model_entry *entries;
     size_t count;
     size_t capacity;
-    sirio_provider last_provider;
-    const sirio_model_info *last_models[SIRIO_PROVIDER_COUNT];
+    const sirio_model_info **interface_models;
+    size_t interface_count;
+    size_t interface_capacity;
+    const sirio_model_info *last_used;
+    bool provider_present[SIRIO_PROVIDER_COUNT];
 };
-
-static bool model_alias_valid(const char *alias) {
-    if (!alias || !alias[0] || strlen(alias) > 63) return false;
-    for (const unsigned char *p = (const unsigned char *)alias; *p; p++)
-        if (!isalnum(*p) && *p != '-' && *p != '_' && *p != '.')
-            return false;
-    return true;
-}
 
 static sirio_model_entry *model_store_entry(
         const sirio_model_store *store, const sirio_model_info *model) {
@@ -3583,21 +3555,11 @@ static sirio_model_entry *model_store_entry(
 
 static int model_store_add(sirio_model_store *store,
                            const sirio_model_info *model,
-                           const char *alias,
                            sirio_reasoning_effort effort,
                            bool active) {
-    if (!store || !model || !model_alias_valid(alias) ||
-        !sirio_model_supports_reasoning(model, effort) ||
+    if (!store || !model || !sirio_model_supports_reasoning(model, effort) ||
         model_store_entry(store, model))
         return -1;
-    for (size_t i = 0; i < store->count; i++) {
-        const sirio_model_entry *entry = &store->entries[i];
-        if (entry->model->provider != model->provider) continue;
-        if (!strcmp(entry->alias, alias) ||
-            !strcmp(entry->model->name, alias) ||
-            !strcmp(entry->alias, model->name))
-            return -1;
-    }
     if (store->count == store->capacity) {
         size_t capacity = store->capacity ? store->capacity * 2 : 8;
         sirio_model_entry *entries = realloc(
@@ -3606,33 +3568,60 @@ static int model_store_add(sirio_model_store *store,
         store->entries = entries;
         store->capacity = capacity;
     }
-    char *alias_copy = bridge_strdup(alias);
-    if (!alias_copy) return -1;
     store->entries[store->count++] = (sirio_model_entry){
         .model = model,
-        .alias = alias_copy,
         .last_effort = effort,
         .active = active,
     };
     return 0;
 }
 
-static int model_store_add_provider_defaults(sirio_model_store *store,
-                                             sirio_provider provider) {
-    for (size_t i = 0; i < sirio_model_count(); i++) {
-        const sirio_model_info *model = sirio_model_at(i);
-        if (model->provider != provider) continue;
-        if (model_store_add(store, model, model->default_alias,
-                            model->default_reasoning, true) != 0)
-            return -1;
+static bool model_store_is_interface_model(
+        const sirio_model_store *store, const sirio_model_info *model) {
+    if (!store || !model) return false;
+    for (size_t i = 0; i < store->interface_count; i++)
+        if (store->interface_models[i] == model) return true;
+    return false;
+}
+
+static int model_store_add_interface_model(
+        sirio_model_store *store, const sirio_model_info *model) {
+    if (!store || !model || !model_store_entry(store, model) ||
+        model_store_is_interface_model(store, model))
+        return -1;
+    if (store->interface_count == store->interface_capacity) {
+        size_t capacity = store->interface_capacity ?
+                          store->interface_capacity * 2 : 4;
+        const sirio_model_info **models = realloc(
+            store->interface_models, capacity * sizeof(*models));
+        if (!models) return -1;
+        store->interface_models = models;
+        store->interface_capacity = capacity;
     }
+    store->interface_models[store->interface_count++] = model;
     return 0;
+}
+
+static const sirio_model_info *model_store_qualified_model(
+        const sirio_model_store *store, const char *reference) {
+    if (!store || !reference) return NULL;
+    const char *slash = strchr(reference, '/');
+    if (!slash || slash == reference || !slash[1] || strchr(slash + 1, '/'))
+        return NULL;
+    char provider_name[32];
+    size_t provider_length = (size_t)(slash - reference);
+    if (provider_length >= sizeof(provider_name)) return NULL;
+    memcpy(provider_name, reference, provider_length);
+    provider_name[provider_length] = '\0';
+    const sirio_provider_info *provider = sirio_provider_find(provider_name);
+    const sirio_model_info *model = provider ?
+        sirio_model_find_for_provider(provider->id, slash + 1) : NULL;
+    return model_store_entry(store, model) ? model : NULL;
 }
 
 static int model_store_parse_provider_array(sirio_model_store *store,
                                             sirio_provider provider,
-                                            json_span array,
-                                            bool *dirty) {
+                                            json_span array) {
     json_parser parser = {.cursor = array.start, .end = array.end};
     if (parser_expect(&parser, '[') != 0) return -1;
     parser_skip_space(&parser);
@@ -3649,18 +3638,15 @@ static int model_store_parse_provider_array(sirio_model_store *store,
             return -1;
         size_t length = (size_t)(parser.cursor - start);
         static const char *const members[] = {
-            "id", "alias", "last_effort", "active",
+            "id", "last_effort", "active",
         };
-        if (json_object_shape(start, length, members, 4,
+        if (json_object_shape(start, length, members, 3,
                               UINT64_C(0x7)) != 0)
             return -1;
         char *id = NULL;
-        char *alias = NULL;
         char *last_effort = NULL;
-        bool active = true;
+        bool active = false;
         int id_found = json_member_optional_string(start, length, "id", &id);
-        int alias_found = json_member_optional_string(
-            start, length, "alias", &alias);
         int effort_found = json_member_optional_string(
             start, length, "last_effort", &last_effort);
         int active_found = json_member_optional_bool(
@@ -3669,20 +3655,15 @@ static int model_store_parse_provider_array(sirio_model_store *store,
             sirio_model_find_for_provider(provider, id) : NULL;
         sirio_reasoning_effort effort = model ? model->default_reasoning :
                                                 SIRIO_REASONING_NONE;
-        bool valid = id_found == 1 && alias_found == 1 &&
-                     effort_found == 1 && model &&
-                     model_alias_valid(alias) &&
+        bool valid = id_found == 1 && effort_found == 1 &&
+                     active_found == 1 && model &&
                      sirio_reasoning_parse(last_effort, &effort) &&
                      sirio_model_supports_reasoning(model, effort) &&
-                     active_found >= 0 &&
-                     model_store_add(store, model, alias, effort,
-                                     active) == 0;
+                     model_store_add(store, model, effort, active) == 0;
         free(id);
-        free(alias);
         free(last_effort);
-        if (!valid || id_found < 0 || alias_found < 0 || effort_found < 0)
+        if (!valid || id_found < 0 || effort_found < 0 || active_found < 0)
             return -1;
-        if (active_found == 0) *dirty = true;
 
         parser_skip_space(&parser);
         if (parser.cursor < parser.end && *parser.cursor == ']') {
@@ -3694,79 +3675,100 @@ static int model_store_parse_provider_array(sirio_model_store *store,
     }
 }
 
+static int model_store_parse_interface_models(sirio_model_store *store,
+                                              json_span array) {
+    json_parser parser = {.cursor = array.start, .end = array.end};
+    if (parser_expect(&parser, '[') != 0) return -1;
+    parser_skip_space(&parser);
+    if (parser.cursor < parser.end && *parser.cursor == ']') return -1;
+    for (;;) {
+        char *reference = NULL;
+        if (parser_string(&parser, &reference) != 0) return -1;
+        const sirio_model_info *model = model_store_qualified_model(
+            store, reference);
+        free(reference);
+        if (!model || model_store_add_interface_model(store, model) != 0)
+            return -1;
+        parser_skip_space(&parser);
+        if (parser.cursor < parser.end && *parser.cursor == ']') {
+            parser.cursor++;
+            parser_skip_space(&parser);
+            return parser.cursor == parser.end ? 0 : -1;
+        }
+        if (parser_expect(&parser, ',') != 0) return -1;
+    }
+}
+
+static int model_store_parse_interface(sirio_model_store *store,
+                                       json_span object) {
+    size_t length = (size_t)(object.end - object.start);
+    static const char *const members[] = {"models", "last_used"};
+    if (json_object_shape(object.start, length, members, 2,
+                          UINT64_C(0x3)) != 0)
+        return -1;
+    json_span models = {0};
+    if (json_object_member(object.start, length, "models", &models) != 1 ||
+        model_store_parse_interface_models(store, models) != 0)
+        return -1;
+
+    json_span last = {0};
+    if (json_object_member(object.start, length, "last_used", &last) != 1)
+        return -1;
+    size_t last_length = (size_t)(last.end - last.start);
+    static const char *const last_members[] = {"model"};
+    if (json_object_shape(last.start, last_length, last_members, 1,
+                          UINT64_C(1)) != 0)
+        return -1;
+    json_span model_value = {0};
+    if (json_object_member(last.start, last_length,
+                           "model", &model_value) != 1)
+        return -1;
+    json_parser parser = {
+        .cursor = model_value.start,
+        .end = model_value.end,
+    };
+    char *reference = NULL;
+    if (parser_nullable_string(&parser, &reference) != 0) return -1;
+    parser_skip_space(&parser);
+    if (parser.cursor != parser.end) {
+        free(reference);
+        return -1;
+    }
+    if (reference) {
+        const sirio_model_info *model = model_store_qualified_model(
+            store, reference);
+        free(reference);
+        if (!model || !model_store_is_interface_model(store, model)) return -1;
+        store->last_used = model;
+    }
+    return 0;
+}
+
 static int model_store_parse(sirio_model_store *store,
-                             const char *json, size_t length,
-                             bool *dirty) {
+                             const char *json, size_t length) {
     if (!store || !json || memchr(json, '\0', length) ||
         !json_object_text_is_valid(json))
         return -1;
     const char *members[SIRIO_PROVIDER_COUNT + 1];
     size_t provider_count = sirio_provider_count();
+    members[0] = "interface";
     for (size_t i = 0; i < provider_count; i++)
-        members[i] = sirio_provider_at(i)->name;
-    members[provider_count] = "last_used";
-    uint64_t required = UINT64_C(1) << provider_count;
+        members[i + 1] = sirio_provider_at(i)->name;
     if (json_object_shape(json, length, members,
-                          provider_count + 1, required) != 0)
+                          provider_count + 1, UINT64_C(1)) != 0)
         return -1;
     for (size_t i = 0; i < sirio_provider_count(); i++) {
         const sirio_provider_info *provider = sirio_provider_at(i);
         json_span array = {0};
         int found = json_object_member(json, length, provider->name, &array);
         if (found < 0 || (found == 1 && model_store_parse_provider_array(
-                store, provider->id, array, dirty) != 0))
+                store, provider->id, array) != 0))
             return -1;
-        if (found == 0) *dirty = true;
+        if (found == 1) store->provider_present[provider->id] = true;
     }
-    for (size_t i = 0; i < sirio_model_count(); i++) {
-        const sirio_model_info *model = sirio_model_at(i);
-        if (model_store_entry(store, model)) continue;
-        if (model_store_add(store, model, model->default_alias,
-                            model->default_reasoning, true) != 0)
-            return -1;
-        *dirty = true;
-    }
-
-    json_span last = {0};
-    int last_found = json_object_member(json, length, "last_used", &last);
-    if (last_found != 1) return -1;
-    size_t last_length = (size_t)(last.end - last.start);
-    const char *last_members[SIRIO_PROVIDER_COUNT + 1];
-    last_members[0] = "provider";
-    for (size_t i = 0; i < provider_count; i++)
-        last_members[i + 1] = sirio_provider_at(i)->name;
-    if (json_object_shape(last.start, last_length, last_members,
-                          provider_count + 1, 0) != 0)
-        return -1;
-
-    for (size_t i = 0; i < provider_count; i++) {
-        const sirio_provider_info *provider = sirio_provider_at(i);
-        char *model_name = NULL;
-        int found = json_member_optional_string(
-            last.start, last_length, provider->name, &model_name);
-        if (found < 0) return -1;
-        if (found == 1) {
-            const sirio_model_info *model = sirio_model_find_for_provider(
-                provider->id, model_name);
-            sirio_model_entry *entry = model_store_entry(store, model);
-            bool valid = entry && entry->active;
-            free(model_name);
-            if (!valid) return -1;
-            store->last_models[provider->id] = model;
-        }
-    }
-
-    char *provider_name = NULL;
-    int provider_found = json_member_optional_string(
-        last.start, last_length, "provider", &provider_name);
-    if (provider_found < 0) return -1;
-    if (provider_found == 1) {
-        const sirio_provider_info *provider = sirio_provider_find(provider_name);
-        free(provider_name);
-        if (!provider || !store->last_models[provider->id]) return -1;
-        store->last_provider = provider->id;
-    }
-    return 0;
+    json_span interface = {0};
+    return json_object_member(json, length, "interface", &interface) == 1 ?
+           model_store_parse_interface(store, interface) : -1;
 }
 
 sirio_model_store *sirio_model_store_load(const char *path,
@@ -3785,14 +3787,11 @@ sirio_model_store *sirio_model_store_load(const char *path,
     size_t length = 0;
     int read_result = provider_read_auth_file(path, &text, &length);
     if (read_result == 1) {
-        for (size_t i = 0; i < sirio_provider_count(); i++)
-            if (model_store_add_provider_defaults(
-                    store, sirio_provider_at(i)->id) != 0) {
-                sirio_model_store_destroy(store);
-                auth_store_error(error, error_len, "out of memory");
-                return NULL;
-            }
-        return store;
+        auth_store_error(error, error_len,
+                         "models file %s does not exist; create it before running Sirio",
+                         path);
+        sirio_model_store_destroy(store);
+        return NULL;
     }
     if (read_result != 0) {
         auth_store_error(error, error_len, "cannot read models file %s: %s",
@@ -3800,19 +3799,13 @@ sirio_model_store *sirio_model_store_load(const char *path,
         sirio_model_store_destroy(store);
         return NULL;
     }
-    bool dirty = false;
-    if (model_store_parse(store, text, length, &dirty) != 0) {
+    if (model_store_parse(store, text, length) != 0) {
         auth_store_error(error, error_len, "invalid models file %s", path);
         free(text);
         sirio_model_store_destroy(store);
         return NULL;
     }
     free(text);
-    if (dirty && sirio_model_store_save(
-            store, path, error, error_len) != 0) {
-        sirio_model_store_destroy(store);
-        return NULL;
-    }
     return store;
 }
 
@@ -3820,14 +3813,21 @@ static int model_store_append_entry(bridge_buffer *body,
                                     const sirio_model_entry *entry) {
     return buffer_puts(body, "    {\"id\": ") == 0 &&
            json_append_string(body, entry->model->name) == 0 &&
-           buffer_puts(body, ", \"alias\": ") == 0 &&
-           json_append_string(body, entry->alias) == 0 &&
            buffer_puts(body, ", \"last_effort\": ") == 0 &&
            json_append_string(body,
                               sirio_reasoning_name(entry->last_effort)) == 0 &&
            buffer_puts(body, ", \"active\": ") == 0 &&
            buffer_puts(body, entry->active ? "true" : "false") == 0 &&
            buffer_putc(body, '}') == 0 ? 0 : -1;
+}
+
+static int model_store_append_reference(bridge_buffer *body,
+                                        const sirio_model_info *model) {
+    char reference[192];
+    int length = model ? snprintf(reference, sizeof(reference), "%s/%s",
+        sirio_provider_name(model->provider), model->name) : -1;
+    return length > 0 && (size_t)length < sizeof(reference) ?
+           json_append_string(body, reference) : -1;
 }
 
 int sirio_model_store_save(const sirio_model_store *store, const char *path,
@@ -3838,13 +3838,29 @@ int sirio_model_store_save(const sirio_model_store *store, const char *path,
         return -1;
     }
     bridge_buffer body = {0};
-    bool first_provider = true;
-    if (buffer_puts(&body, "{\n") != 0) goto oom;
+    if (buffer_puts(&body, "{\n  \"interface\": {\n"
+                          "    \"models\": [\n") != 0)
+        goto oom;
+    for (size_t i = 0; i < store->interface_count; i++) {
+        if (buffer_puts(&body, i ? ",\n      " : "      ") != 0 ||
+            model_store_append_reference(
+                &body, store->interface_models[i]) != 0)
+            goto oom;
+    }
+    if (buffer_puts(&body,
+                    "\n    ],\n    \"last_used\": {\"model\": ") != 0)
+        goto oom;
+    if (store->last_used) {
+        if (model_store_append_reference(&body, store->last_used) != 0)
+            goto oom;
+    } else if (buffer_puts(&body, "null") != 0) {
+        goto oom;
+    }
+    if (buffer_puts(&body, "}\n  }") != 0) goto oom;
     for (size_t p = 0; p < sirio_provider_count(); p++) {
         const sirio_provider_info *provider = sirio_provider_at(p);
-        if (!first_provider && buffer_puts(&body, ",\n") != 0) goto oom;
-        first_provider = false;
-        if (buffer_puts(&body, "  ") != 0 ||
+        if (!store->provider_present[provider->id]) continue;
+        if (buffer_puts(&body, ",\n  ") != 0 ||
             json_append_string(&body, provider->name) != 0 ||
             buffer_puts(&body, ": [") != 0)
             goto oom;
@@ -3860,27 +3876,6 @@ int sirio_model_store_save(const sirio_model_store *store, const char *path,
         if (!first_entry && buffer_puts(&body, "\n  ") != 0) goto oom;
         if (buffer_putc(&body, ']') != 0) goto oom;
     }
-    if (buffer_puts(&body, ",\n  \"last_used\": {") != 0) goto oom;
-    bool first_last = true;
-    if (store->last_provider != SIRIO_PROVIDER_NONE) {
-        if (buffer_puts(&body, "\"provider\": ") != 0 ||
-            json_append_string(&body,
-                sirio_provider_name(store->last_provider)) != 0)
-            goto oom;
-        first_last = false;
-    }
-    for (size_t p = 0; p < sirio_provider_count(); p++) {
-        const sirio_provider_info *provider = sirio_provider_at(p);
-        const sirio_model_info *model = store->last_models[provider->id];
-        if (!model) continue;
-        if ((!first_last && buffer_puts(&body, ", ") != 0) ||
-            json_append_string(&body, provider->name) != 0 ||
-            buffer_puts(&body, ": ") != 0 ||
-            json_append_string(&body, model->name) != 0)
-            goto oom;
-        first_last = false;
-    }
-    if (buffer_putc(&body, '}') != 0) goto oom;
     if (buffer_puts(&body, "\n}\n") != 0) goto oom;
     if (provider_write_auth_file(path, body.data, body.length) != 0) {
         auth_store_error(error, error_len, "cannot save models file %s: %s",
@@ -3899,7 +3894,7 @@ oom:
 
 void sirio_model_store_destroy(sirio_model_store *store) {
     if (!store) return;
-    for (size_t i = 0; i < store->count; i++) free(store->entries[i].alias);
+    free(store->interface_models);
     free(store->entries);
     free(store);
 }
@@ -3916,7 +3911,6 @@ size_t sirio_model_store_count(const sirio_model_store *store,
 const sirio_model_info *sirio_model_store_at(const sirio_model_store *store,
                                              sirio_provider provider,
                                              size_t index,
-                                             const char **alias_out,
                                              sirio_reasoning_effort *effort_out,
                                              bool *active_out) {
     if (!store) return NULL;
@@ -3924,7 +3918,6 @@ const sirio_model_info *sirio_model_store_at(const sirio_model_store *store,
         const sirio_model_entry *entry = &store->entries[i];
         if (entry->model->provider != provider) continue;
         if (index--) continue;
-        if (alias_out) *alias_out = entry->alias;
         if (effort_out) *effort_out = entry->last_effort;
         if (active_out) *active_out = entry->active;
         return entry->model;
@@ -3934,23 +3927,21 @@ const sirio_model_info *sirio_model_store_at(const sirio_model_store *store,
 
 const sirio_model_info *sirio_model_store_first_active(
         const sirio_model_store *store, sirio_provider provider,
-        const char **alias_out, sirio_reasoning_effort *effort_out) {
+        sirio_reasoning_effort *effort_out) {
     if (!store) return NULL;
     for (size_t i = 0; i < store->count; i++) {
         const sirio_model_entry *entry = &store->entries[i];
         if (entry->model->provider != provider || !entry->active) continue;
-        if (alias_out) *alias_out = entry->alias;
         if (effort_out) *effort_out = entry->last_effort;
         return entry->model;
     }
     return NULL;
 }
 
-const sirio_model_info *sirio_model_store_resolve(
+static const sirio_model_info *model_store_resolve(
         const sirio_model_store *store, sirio_provider provider_hint,
-        const char *name, const char **alias_out,
+        const char *name, bool interface_only,
         char *error, size_t error_len) {
-    if (alias_out) *alias_out = NULL;
     if (!store || !name || !name[0]) {
         auth_store_error(error, error_len, "model name is empty");
         return NULL;
@@ -3978,14 +3969,22 @@ const sirio_model_info *sirio_model_store_resolve(
         model_name = slash + 1;
     }
     const sirio_model_entry *match = NULL;
+    const sirio_model_entry *unscoped_match = NULL;
+    bool unscoped_ambiguous = false;
     for (size_t i = 0; i < store->count; i++) {
         const sirio_model_entry *entry = &store->entries[i];
         if (provider_hint != SIRIO_PROVIDER_NONE &&
             entry->model->provider != provider_hint)
             continue;
-        if (strcmp(model_name, entry->model->name) &&
-            strcmp(model_name, entry->alias))
+        if (strcmp(model_name, entry->model->name)) continue;
+        if (interface_only &&
+            !model_store_is_interface_model(store, entry->model)) {
+            if (unscoped_match && unscoped_match->model != entry->model)
+                unscoped_ambiguous = true;
+            else
+                unscoped_match = entry;
             continue;
+        }
         if (match && match->model != entry->model) {
             auth_store_error(error, error_len,
                              "model name is ambiguous; use provider/name");
@@ -3994,12 +3993,29 @@ const sirio_model_info *sirio_model_store_resolve(
         match = entry;
     }
     if (!match) {
+        if (interface_only && unscoped_ambiguous) {
+            auth_store_error(error, error_len,
+                             "model name is ambiguous; use provider/name");
+            return NULL;
+        }
+        if (interface_only && unscoped_match) {
+            if (!unscoped_match->active) {
+                auth_store_error(error, error_len,
+                                 "model is inactive: %s", name);
+                return NULL;
+            }
+            auth_store_error(error, error_len,
+                             "%s/%s is available only through subprocess",
+                             sirio_provider_name(
+                                 unscoped_match->model->provider),
+                             unscoped_match->model->name);
+            return NULL;
+        }
         if (provider_hint != SIRIO_PROVIDER_NONE) {
             for (size_t i = 0; i < store->count; i++) {
                 const sirio_model_entry *entry = &store->entries[i];
                 if (entry->model->provider == provider_hint) continue;
-                if (!strcmp(model_name, entry->model->name) ||
-                    !strcmp(model_name, entry->alias)) {
+                if (!strcmp(model_name, entry->model->name)) {
                     auth_store_error(
                         error, error_len,
                         "model provider conflicts with selected provider");
@@ -4014,14 +4030,42 @@ const sirio_model_info *sirio_model_store_resolve(
         auth_store_error(error, error_len, "model is inactive: %s", name);
         return NULL;
     }
-    if (alias_out) *alias_out = match->alias;
     return match->model;
 }
 
-const char *sirio_model_store_alias(const sirio_model_store *store,
-                                    const sirio_model_info *model) {
-    sirio_model_entry *entry = model_store_entry(store, model);
-    return entry ? entry->alias : NULL;
+const sirio_model_info *sirio_model_store_resolve(
+        const sirio_model_store *store, sirio_provider provider_hint,
+        const char *name, char *error, size_t error_len) {
+    return model_store_resolve(store, provider_hint, name, false,
+                               error, error_len);
+}
+
+size_t sirio_model_store_interface_count(const sirio_model_store *store) {
+    return store ? store->interface_count : 0;
+}
+
+const sirio_model_info *sirio_model_store_interface_at(
+        const sirio_model_store *store, size_t index,
+        sirio_reasoning_effort *effort_out, bool *active_out) {
+    if (!store || index >= store->interface_count) return NULL;
+    const sirio_model_info *model = store->interface_models[index];
+    const sirio_model_entry *entry = model_store_entry(store, model);
+    if (!entry) return NULL;
+    if (effort_out) *effort_out = entry->last_effort;
+    if (active_out) *active_out = entry->active;
+    return model;
+}
+
+bool sirio_model_store_is_interface_model(
+        const sirio_model_store *store, const sirio_model_info *model) {
+    return model_store_is_interface_model(store, model);
+}
+
+const sirio_model_info *sirio_model_store_resolve_interface(
+        const sirio_model_store *store, const char *name,
+        char *error, size_t error_len) {
+    return model_store_resolve(store, SIRIO_PROVIDER_NONE, name, true,
+                               error, error_len);
 }
 
 sirio_reasoning_effort sirio_model_store_effort(
@@ -4032,29 +4076,13 @@ sirio_reasoning_effort sirio_model_store_effort(
 }
 
 bool sirio_model_store_last_used(const sirio_model_store *store,
-                                 sirio_provider *provider_out,
                                  const sirio_model_info **model_out) {
-    if (!store || store->last_provider == SIRIO_PROVIDER_NONE ||
-        !store->last_models[store->last_provider])
+    if (!store || !store->last_used) return false;
+    sirio_model_entry *entry = model_store_entry(store, store->last_used);
+    if (!entry || !entry->active ||
+        !model_store_is_interface_model(store, store->last_used))
         return false;
-    sirio_model_entry *entry = model_store_entry(
-        store, store->last_models[store->last_provider]);
-    if (!entry || !entry->active) return false;
-    if (provider_out) *provider_out = store->last_provider;
-    if (model_out) *model_out = store->last_models[store->last_provider];
-    return true;
-}
-
-bool sirio_model_store_last_used_for_provider(
-        const sirio_model_store *store, sirio_provider provider,
-        const sirio_model_info **model_out) {
-    if (!store || !sirio_provider_get(provider) ||
-        !store->last_models[provider])
-        return false;
-    sirio_model_entry *entry = model_store_entry(
-        store, store->last_models[provider]);
-    if (!entry || !entry->active) return false;
-    if (model_out) *model_out = store->last_models[provider];
+    if (model_out) *model_out = store->last_used;
     return true;
 }
 
@@ -4063,11 +4091,11 @@ int sirio_model_store_set_last_used(sirio_model_store *store,
                                     sirio_reasoning_effort effort) {
     sirio_model_entry *entry = model_store_entry(store, model);
     if (!entry || !entry->active ||
+        !model_store_is_interface_model(store, model) ||
         !sirio_model_supports_reasoning(model, effort))
         return -1;
     entry->last_effort = effort;
-    store->last_models[model->provider] = model;
-    store->last_provider = model->provider;
+    store->last_used = model;
     return 0;
 }
 

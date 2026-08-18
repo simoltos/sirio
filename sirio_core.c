@@ -3677,7 +3677,8 @@ int run_agent(sirio_engine *engine, agent_config *cfg) {
                                    engine->provider == SIRIO_PROVIDER_NONE ?
                                        "unknown" :
                                        sirio_provider_name(engine->provider),
-                                   engine->alias,
+                                   engine->model ? engine->model->name :
+                                                   "unknown",
                                    sirio_reasoning_name(engine->reasoning));
                             force_status_redraw_after_restart = true;
                         }

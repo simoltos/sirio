@@ -397,53 +397,39 @@ static int sirio_resolve_selection(const sirio_cli_options *options,
                                    const sirio_model_info **model_out,
                                    char *error, size_t error_len) {
     bool subprocess = sirio_is_subprocess();
-    sirio_provider provider = subprocess ? SIRIO_PROVIDER_NONE :
-                                           sirio_provider_default();
+    sirio_provider provider = SIRIO_PROVIDER_NONE;
     const sirio_model_info *model = NULL;
     if (options->model_name) {
-        sirio_provider provider_hint = strchr(options->model_name, '/') ?
-            SIRIO_PROVIDER_NONE : provider;
-        model = sirio_model_store_resolve(
-            models, provider_hint, options->model_name,
-            NULL, error, error_len);
+        model = subprocess ? sirio_model_store_resolve(
+            models, SIRIO_PROVIDER_NONE, options->model_name,
+            error, error_len) : sirio_model_store_resolve_interface(
+            models, options->model_name, error, error_len);
         if (!model) return 2;
         provider = model->provider;
-        if (!subprocess && !sirio_model_is_entrypoint(model)) {
-            snprintf(error, error_len,
-                     "%s/%s is available only through subprocess",
-                     sirio_provider_name(model->provider), model->name);
-            return 2;
-        }
     } else if (subprocess) {
         snprintf(error, error_len, "subprocess requires an explicit model");
         return 2;
     } else {
         const sirio_model_info *last_model = NULL;
-        if (sirio_model_store_last_used_for_provider(
-                models, provider, &last_model) &&
-            sirio_model_is_entrypoint(last_model))
+        if (sirio_model_store_last_used(models, &last_model) &&
+            sirio_provider_has_auth(store, last_model->provider))
             model = last_model;
-        const sirio_provider_info *info = sirio_provider_get(provider);
-        if (!model && info) {
-            const sirio_model_info *candidate = sirio_model_store_resolve(
-                models, provider, info->default_model,
-                NULL, NULL, 0);
-            if (sirio_model_is_entrypoint(candidate)) model = candidate;
-        }
-        size_t count = sirio_model_store_count(models, provider);
+        size_t count = sirio_model_store_interface_count(models);
         for (size_t i = 0; !model && i < count; i++) {
             bool active = false;
-            const sirio_model_info *candidate = sirio_model_store_at(
-                models, provider, i, NULL, NULL, &active);
-            if (active && sirio_model_is_entrypoint(candidate))
+            const sirio_model_info *candidate =
+                sirio_model_store_interface_at(
+                    models, i, NULL, &active);
+            if (active && sirio_provider_has_auth(
+                    store, candidate->provider))
                 model = candidate;
         }
+        if (model) provider = model->provider;
     }
     if (!model) {
         snprintf(error, error_len,
-                 "no active entry model for provider: %s",
-                 sirio_provider_name(sirio_provider_default()));
-        return 2;
+                 "no active interface model has configured credentials");
+        return 1;
     }
     if (!sirio_provider_has_auth(store, provider)) {
         snprintf(error, error_len,
@@ -473,23 +459,28 @@ static int sirio_host_select_model(sirio_engine *engine,
     sirio_model_store *models = sirio_model_store_load(
         host->models_path, error, error_len);
     if (!models) return 1;
-    const char *alias = NULL;
     sirio_provider provider_hint = SIRIO_PROVIDER_NONE;
     if (!strchr(model_name, '/') && engine->model &&
-        (!strcmp(model_name, engine->model->name) ||
-         !strcmp(model_name, engine->alias)))
+        !strcmp(model_name, engine->model->name))
         provider_hint = engine->model->provider;
-    const sirio_model_info *model = sirio_model_store_resolve(
-        models, provider_hint, model_name, &alias,
-        error, error_len);
-    if (!model) {
-        sirio_model_store_destroy(models);
-        return 2;
+    char qualified_name[192];
+    const char *resolved_name = model_name;
+    if (!host->subprocess && provider_hint != SIRIO_PROVIDER_NONE) {
+        int length = snprintf(qualified_name, sizeof(qualified_name), "%s/%s",
+                              sirio_provider_name(provider_hint), model_name);
+        if (length < 0 || (size_t)length >= sizeof(qualified_name)) {
+            snprintf(error, error_len, "model selection is too long");
+            sirio_model_store_destroy(models);
+            return 2;
+        }
+        resolved_name = qualified_name;
     }
-    if (!host->subprocess && !sirio_model_is_entrypoint(model)) {
-        snprintf(error, error_len,
-                 "%s/%s is available only through subprocess",
-                 sirio_provider_name(model->provider), model->name);
+    const sirio_model_info *model = host->subprocess ?
+        sirio_model_store_resolve(models, provider_hint, model_name,
+                                  error, error_len) :
+        sirio_model_store_resolve_interface(models, resolved_name,
+                                            error, error_len);
+    if (!model) {
         sirio_model_store_destroy(models);
         return 2;
     }
@@ -563,8 +554,6 @@ static int sirio_host_select_model(sirio_engine *engine,
     engine->bridge = bridge;
     engine->provider = model->provider;
     engine->model = model;
-    snprintf(engine->alias, sizeof(engine->alias), "%s",
-             alias ? alias : model->name);
     engine->reasoning = reasoning;
     engine->generation = generation;
     if (engine->cancel_poll)
@@ -588,12 +577,16 @@ static int sirio_host_step_model(sirio_engine *engine, int direction,
         host->models_path, error, error_len);
     if (!models) return 1;
 
-    size_t count = sirio_model_store_count(models, engine->provider);
+    size_t count = host->subprocess ?
+        sirio_model_store_count(models, engine->provider) :
+        sirio_model_store_interface_count(models);
     size_t current = count;
     for (size_t i = 0; i < count; i++) {
-        const sirio_model_info *candidate = sirio_model_store_at(
-            models, engine->provider, i, NULL, NULL, NULL);
-        if (candidate && !strcmp(candidate->name, engine->model->name)) {
+        const sirio_model_info *candidate = host->subprocess ?
+            sirio_model_store_at(models, engine->provider, i,
+                                 NULL, NULL) :
+            sirio_model_store_interface_at(models, i, NULL, NULL);
+        if (candidate == engine->model) {
             current = i;
             break;
         }
@@ -606,28 +599,39 @@ static int sirio_host_step_model(sirio_engine *engine, int direction,
 
     const sirio_model_info *target = NULL;
     sirio_reasoning_effort effort = SIRIO_REASONING_NONE;
+    sirio_auth_store *auth = sirio_auth_store_load(
+        host->auth_path, error, error_len);
+    if (!auth) {
+        sirio_model_store_destroy(models);
+        return 1;
+    }
     for (long i = (long)current + direction;
          i >= 0 && (size_t)i < count; i += direction) {
         bool active = false;
-        const sirio_model_info *candidate = sirio_model_store_at(
-            models, engine->provider, (size_t)i, NULL, &effort, &active);
+        const sirio_model_info *candidate = host->subprocess ?
+            sirio_model_store_at(models, engine->provider, (size_t)i,
+                                 &effort, &active) :
+            sirio_model_store_interface_at(models, (size_t)i,
+                                           &effort, &active);
         if (candidate && active &&
-            (host->subprocess || sirio_model_is_entrypoint(candidate))) {
+            sirio_provider_has_auth(auth, candidate->provider)) {
             target = candidate;
             break;
         }
     }
     if (!target) {
         if (at_limit) *at_limit = true;
+        sirio_auth_store_destroy(auth);
         sirio_model_store_destroy(models);
         return 0;
     }
     char selection[192];
     int length = snprintf(selection, sizeof(selection), "%s/%s",
-                          sirio_provider_name(engine->provider), target->name);
+                          sirio_provider_name(target->provider), target->name);
     char reasoning[16];
     snprintf(reasoning, sizeof(reasoning), "%s",
              sirio_reasoning_name(effort));
+    sirio_auth_store_destroy(auth);
     sirio_model_store_destroy(models);
     if (length < 0 || (size_t)length >= sizeof(selection)) {
         snprintf(error, error_len, "model selection is too long");
@@ -843,10 +847,17 @@ static int sirio_run_action(const sirio_cli_options *options,
     if (options->action == SIRIO_CLI_LIST_PROVIDERS) {
         for (size_t i = 0; i < sirio_provider_count(); i++) {
             const sirio_provider_info *info = sirio_provider_at(i);
-            printf("%-10s model %s; role %s; auth ",
-                   info->name, info->default_model,
-                   info->id == sirio_provider_default() ?
-                   "entry" : "subprocess");
+            size_t configured = sirio_model_store_count(models, info->id);
+            size_t interface = 0;
+            for (size_t m = 0;
+                 m < sirio_model_store_interface_count(models); m++) {
+                const sirio_model_info *model =
+                    sirio_model_store_interface_at(
+                        models, m, NULL, NULL);
+                if (model && model->provider == info->id) interface++;
+            }
+            printf("%-10s configured %zu; interface %zu; auth ",
+                   info->name, configured, interface);
             if (info->supports_api_key) fputs("api-key", stdout);
             if (info->supports_api_key && info->supports_oauth) fputc('/', stdout);
             if (info->supports_oauth) fputs("oauth", stdout);
@@ -868,15 +879,14 @@ static int sirio_run_action(const sirio_cli_options *options,
             if (filter && provider->id != filter->id) continue;
             size_t count = sirio_model_store_count(models, provider->id);
             for (size_t i = 0; i < count; i++) {
-                const char *alias = NULL;
                 sirio_reasoning_effort effort = SIRIO_REASONING_NONE;
                 bool active = false;
                 const sirio_model_info *model = sirio_model_store_at(
-                    models, provider->id, i, &alias, &effort, &active);
-                printf("%-22s %-10s alias %-8s scope %-10s active %-5s last effort %s\n",
-                       model->name, provider->name, alias,
-                       sirio_model_is_entrypoint(model) ?
-                       "entry" : "subprocess",
+                    models, provider->id, i, &effort, &active);
+                printf("%-22s %-10s scope %-10s active %-5s last effort %s\n",
+                       model->name, provider->name,
+                       sirio_model_store_is_interface_model(models, model) ?
+                       "interface" : "subprocess",
                        active ? "true" : "false",
                        sirio_reasoning_name(effort));
             }
@@ -1193,10 +1203,6 @@ int sirio_main(int argc, char **argv) {
         .step_model = sirio_host_step_model,
         .select_private_data = &host,
     };
-    const char *alias = sirio_model_store_alias(models, model);
-    snprintf(engine.alias, sizeof(engine.alias), "%s",
-             alias ? alias : model->name);
-
     int result = sirio_agent_run(&engine, &run_config);
     if (engine.bridge) sirio_bridge_destroy(engine.bridge);
     sirio_model_store_destroy(host.models);
