@@ -114,16 +114,41 @@ static const sirio_provider_info provider_catalog[] = {
     },
 };
 
+/* Models with identical controls share a named reasoning capability mask. */
+enum {
+    SIRIO_REASONING_MASK_NONE_LOW_HIGH_MAX =
+        SIRIO_REASONING_BIT(SIRIO_REASONING_NONE) |
+        SIRIO_REASONING_BIT(SIRIO_REASONING_LOW) |
+        SIRIO_REASONING_BIT(SIRIO_REASONING_HIGH) |
+        SIRIO_REASONING_BIT(SIRIO_REASONING_MAX),
+    SIRIO_REASONING_MASK_NONE_HIGH_MAX =
+        SIRIO_REASONING_BIT(SIRIO_REASONING_NONE) |
+        SIRIO_REASONING_BIT(SIRIO_REASONING_HIGH) |
+        SIRIO_REASONING_BIT(SIRIO_REASONING_MAX),
+    SIRIO_REASONING_MASK_LOW_MEDIUM_HIGH_XHIGH_MAX =
+        SIRIO_REASONING_BIT(SIRIO_REASONING_LOW) |
+        SIRIO_REASONING_BIT(SIRIO_REASONING_MEDIUM) |
+        SIRIO_REASONING_BIT(SIRIO_REASONING_HIGH) |
+        SIRIO_REASONING_BIT(SIRIO_REASONING_XHIGH) |
+        SIRIO_REASONING_BIT(SIRIO_REASONING_MAX),
+    SIRIO_REASONING_MASK_HIGH_MAX =
+        SIRIO_REASONING_BIT(SIRIO_REASONING_HIGH) |
+        SIRIO_REASONING_BIT(SIRIO_REASONING_MAX),
+    SIRIO_REASONING_MASK_LOW_HIGH_MAX =
+        SIRIO_REASONING_BIT(SIRIO_REASONING_LOW) |
+        SIRIO_REASONING_BIT(SIRIO_REASONING_HIGH) |
+        SIRIO_REASONING_BIT(SIRIO_REASONING_MAX),
+    SIRIO_REASONING_MASK_HIGH_ONLY =
+        SIRIO_REASONING_BIT(SIRIO_REASONING_HIGH),
+};
+
 static const sirio_model_info model_catalog[] = {
     {
         .name = DEEPSEEK_MODEL,
         .provider = SIRIO_PROVIDER_DEEPSEEK,
         .context_tokens = SIRIO_MODEL_CONTEXT_TOKENS,
         .max_output_tokens = SIRIO_MODEL_MAX_OUTPUT_TOKENS,
-        .reasoning_mask = SIRIO_REASONING_BIT(SIRIO_REASONING_NONE) |
-                          SIRIO_REASONING_BIT(SIRIO_REASONING_LOW) |
-                          SIRIO_REASONING_BIT(SIRIO_REASONING_HIGH) |
-                          SIRIO_REASONING_BIT(SIRIO_REASONING_MAX),
+        .reasoning_mask = SIRIO_REASONING_MASK_NONE_LOW_HIGH_MAX,
         .default_reasoning = SIRIO_REASONING_HIGH,
     },
     {
@@ -131,9 +156,7 @@ static const sirio_model_info model_catalog[] = {
         .provider = SIRIO_PROVIDER_DEEPSEEK,
         .context_tokens = SIRIO_MODEL_CONTEXT_TOKENS,
         .max_output_tokens = SIRIO_MODEL_MAX_OUTPUT_TOKENS,
-        .reasoning_mask = SIRIO_REASONING_BIT(SIRIO_REASONING_NONE) |
-                          SIRIO_REASONING_BIT(SIRIO_REASONING_HIGH) |
-                          SIRIO_REASONING_BIT(SIRIO_REASONING_MAX),
+        .reasoning_mask = SIRIO_REASONING_MASK_NONE_HIGH_MAX,
         .default_reasoning = SIRIO_REASONING_HIGH,
     },
     {
@@ -141,11 +164,7 @@ static const sirio_model_info model_catalog[] = {
         .provider = SIRIO_PROVIDER_OPENAI,
         .context_tokens = OPENAI_MODEL_CONTEXT_TOKENS,
         .max_output_tokens = 128000,
-        .reasoning_mask = SIRIO_REASONING_BIT(SIRIO_REASONING_LOW) |
-                          SIRIO_REASONING_BIT(SIRIO_REASONING_MEDIUM) |
-                          SIRIO_REASONING_BIT(SIRIO_REASONING_HIGH) |
-                          SIRIO_REASONING_BIT(SIRIO_REASONING_XHIGH) |
-                          SIRIO_REASONING_BIT(SIRIO_REASONING_MAX),
+        .reasoning_mask = SIRIO_REASONING_MASK_LOW_MEDIUM_HIGH_XHIGH_MAX,
         .default_reasoning = SIRIO_REASONING_LOW,
     },
     {
@@ -153,11 +172,7 @@ static const sirio_model_info model_catalog[] = {
         .provider = SIRIO_PROVIDER_OPENAI,
         .context_tokens = OPENAI_MODEL_CONTEXT_TOKENS,
         .max_output_tokens = 128000,
-        .reasoning_mask = SIRIO_REASONING_BIT(SIRIO_REASONING_LOW) |
-                          SIRIO_REASONING_BIT(SIRIO_REASONING_MEDIUM) |
-                          SIRIO_REASONING_BIT(SIRIO_REASONING_HIGH) |
-                          SIRIO_REASONING_BIT(SIRIO_REASONING_XHIGH) |
-                          SIRIO_REASONING_BIT(SIRIO_REASONING_MAX),
+        .reasoning_mask = SIRIO_REASONING_MASK_LOW_MEDIUM_HIGH_XHIGH_MAX,
         .default_reasoning = SIRIO_REASONING_MEDIUM,
     },
     {
@@ -165,11 +180,7 @@ static const sirio_model_info model_catalog[] = {
         .provider = SIRIO_PROVIDER_OPENAI,
         .context_tokens = OPENAI_MODEL_CONTEXT_TOKENS,
         .max_output_tokens = 128000,
-        .reasoning_mask = SIRIO_REASONING_BIT(SIRIO_REASONING_LOW) |
-                          SIRIO_REASONING_BIT(SIRIO_REASONING_MEDIUM) |
-                          SIRIO_REASONING_BIT(SIRIO_REASONING_HIGH) |
-                          SIRIO_REASONING_BIT(SIRIO_REASONING_XHIGH) |
-                          SIRIO_REASONING_BIT(SIRIO_REASONING_MAX),
+        .reasoning_mask = SIRIO_REASONING_MASK_LOW_MEDIUM_HIGH_XHIGH_MAX,
         .default_reasoning = SIRIO_REASONING_LOW,
     },
     {
@@ -177,10 +188,7 @@ static const sirio_model_info model_catalog[] = {
         .provider = SIRIO_PROVIDER_OPENCODE_GO,
         .context_tokens = SIRIO_MODEL_CONTEXT_TOKENS,
         .max_output_tokens = SIRIO_MODEL_MAX_OUTPUT_TOKENS,
-        .reasoning_mask = SIRIO_REASONING_BIT(SIRIO_REASONING_NONE) |
-                          SIRIO_REASONING_BIT(SIRIO_REASONING_LOW) |
-                          SIRIO_REASONING_BIT(SIRIO_REASONING_HIGH) |
-                          SIRIO_REASONING_BIT(SIRIO_REASONING_MAX),
+        .reasoning_mask = SIRIO_REASONING_MASK_NONE_LOW_HIGH_MAX,
         .default_reasoning = SIRIO_REASONING_NONE,
     },
     {
@@ -188,8 +196,7 @@ static const sirio_model_info model_catalog[] = {
         .provider = SIRIO_PROVIDER_OPENCODE_GO,
         .context_tokens = SIRIO_MODEL_CONTEXT_TOKENS,
         .max_output_tokens = SIRIO_MODEL_MAX_OUTPUT_TOKENS,
-        .reasoning_mask = SIRIO_REASONING_BIT(SIRIO_REASONING_HIGH) |
-                          SIRIO_REASONING_BIT(SIRIO_REASONING_MAX),
+        .reasoning_mask = SIRIO_REASONING_MASK_HIGH_MAX,
         .default_reasoning = SIRIO_REASONING_HIGH,
     },
     {
@@ -197,9 +204,7 @@ static const sirio_model_info model_catalog[] = {
         .provider = SIRIO_PROVIDER_OPENCODE_GO,
         .context_tokens = 1000000,
         .max_output_tokens = 131072,
-        .reasoning_mask = SIRIO_REASONING_BIT(SIRIO_REASONING_LOW) |
-                          SIRIO_REASONING_BIT(SIRIO_REASONING_HIGH) |
-                          SIRIO_REASONING_BIT(SIRIO_REASONING_MAX),
+        .reasoning_mask = SIRIO_REASONING_MASK_LOW_HIGH_MAX,
         .default_reasoning = SIRIO_REASONING_HIGH,
     },
     {
@@ -207,9 +212,7 @@ static const sirio_model_info model_catalog[] = {
         .provider = SIRIO_PROVIDER_KIMI,
         .context_tokens = KIMI_CONTEXT_TOKENS,
         .max_output_tokens = 131072,
-        .reasoning_mask = SIRIO_REASONING_BIT(SIRIO_REASONING_LOW) |
-                          SIRIO_REASONING_BIT(SIRIO_REASONING_HIGH) |
-                          SIRIO_REASONING_BIT(SIRIO_REASONING_MAX),
+        .reasoning_mask = SIRIO_REASONING_MASK_LOW_HIGH_MAX,
         .default_reasoning = SIRIO_REASONING_HIGH,
     },
     {
@@ -217,9 +220,7 @@ static const sirio_model_info model_catalog[] = {
         .provider = SIRIO_PROVIDER_KIMI,
         .context_tokens = KIMI_CONTEXT_TOKENS,
         .max_output_tokens = 131072,
-        .reasoning_mask = SIRIO_REASONING_BIT(SIRIO_REASONING_LOW) |
-                          SIRIO_REASONING_BIT(SIRIO_REASONING_HIGH) |
-                          SIRIO_REASONING_BIT(SIRIO_REASONING_MAX),
+        .reasoning_mask = SIRIO_REASONING_MASK_LOW_HIGH_MAX,
         .default_reasoning = SIRIO_REASONING_HIGH,
     },
     {
@@ -227,7 +228,7 @@ static const sirio_model_info model_catalog[] = {
         .provider = SIRIO_PROVIDER_KIMI,
         .context_tokens = KIMI_CONTEXT_TOKENS,
         .max_output_tokens = 32768,
-        .reasoning_mask = SIRIO_REASONING_BIT(SIRIO_REASONING_HIGH),
+        .reasoning_mask = SIRIO_REASONING_MASK_HIGH_ONLY,
         .default_reasoning = SIRIO_REASONING_HIGH,
     },
 };
