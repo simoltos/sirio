@@ -872,6 +872,7 @@ static void test_system_prompt_order(void) {
     test_worker_init(&w);
     agent_config cfg;
     sirio_config_defaults(&cfg);
+    cfg.gen.system = "Additional system instruction.";
     struct sirio_engine engine = {0};
     w.cfg = &cfg;
     w.engine = &engine;
@@ -883,9 +884,13 @@ static void test_system_prompt_order(void) {
                              sirio_native_prompt_intro) ==
                       sirio_conv.v[0].text);
     const char *extra = strstr(sirio_conv.v[0].text,
-                               sirio_default_system_extra);
+                               cfg.gen.system);
     SIRIO_TEST_ASSERT(extra != NULL);
     SIRIO_TEST_ASSERT(extra > sirio_conv.v[0].text);
+    const char *identity = strstr(sirio_conv.v[0].text, "You are Sirio");
+    SIRIO_TEST_ASSERT(identity == sirio_conv.v[0].text);
+    SIRIO_TEST_ASSERT(identity &&
+                      strstr(identity + 1, "You are Sirio") == NULL);
     conv_free();
     test_worker_free(&w);
 }
@@ -993,12 +998,12 @@ static void test_cloud_context_injections(void) {
     w.last_system_prompt_reminder_at = 1;
     w.context_used = 1 + AGENT_SYSTEM_PROMPT_REMINDER_TOKENS;
     agent_worker_maybe_append_system_prompt_reminder(&w);
-    SIRIO_TEST_ASSERT(sirio_conv.len == 3);
+    SIRIO_TEST_ASSERT(sirio_conv.len == 2);
     SIRIO_TEST_ASSERT(sirio_conv.v[1].role == 0);
     SIRIO_TEST_ASSERT(strstr(sirio_conv.v[1].text,
                              "System prompt reminder follows") != NULL);
-    SIRIO_TEST_ASSERT(!strcmp(sirio_conv.v[2].text,
-                              sirio_default_system_extra));
+    SIRIO_TEST_ASSERT(strstr(sirio_conv.v[1].text,
+                             "You are Sirio") != NULL);
     SIRIO_TEST_ASSERT(w.last_system_prompt_reminder_at == w.context_used);
 
     conv_free();
@@ -1069,7 +1074,7 @@ static void test_every_native_tool_has_a_working_portable_schema(void) {
     };
     SIRIO_TEST_ASSERT(SIRIO_NATIVE_TOOL_COUNT ==
                       sizeof(valid_arguments) / sizeof(valid_arguments[0]));
-    SIRIO_TEST_ASSERT(worker_native_tool_find("subprocess") != NULL);
+    SIRIO_TEST_ASSERT(worker_native_tool_find("subagent") != NULL);
     SIRIO_TEST_ASSERT(worker_native_tool_find("sirio") == NULL);
     for (size_t i = 0; i < SIRIO_NATIVE_TOOL_COUNT; i++) {
         sirio_tool_call native = {
@@ -1088,7 +1093,7 @@ static void test_every_native_tool_has_a_working_portable_schema(void) {
     }
 }
 
-static void test_subprocess_tool_runs_on_the_host(void) {
+static void test_subagent_tool_runs_on_the_host(void) {
     const char *old_child_env = getenv("SIRIO_TEST_SUBPROCESS_CHILD");
     const char *old_depth_env = getenv(SIRIO_SUBPROCESS_DEPTH_ENV);
     char *old_child = old_child_env ? xstrdup(old_child_env) : NULL;
@@ -1112,7 +1117,7 @@ static void test_subprocess_tool_runs_on_the_host(void) {
 
     sirio_tool_call native = {
         .id = "delegate-call",
-        .name = "subprocess",
+        .name = "subagent",
         .arguments_json = "{\"prompt\":\"delegated task\"}",
     };
     agent_tool_call call = {0};
@@ -1556,6 +1561,13 @@ static void test_runtime_selection_and_reasoning_steps(void) {
         &w, -1, &at_limit, error, sizeof(error)));
     SIRIO_TEST_ASSERT(!at_limit);
     SIRIO_TEST_ASSERT(engine.reasoning == SIRIO_REASONING_LOW);
+    SIRIO_TEST_ASSERT(sirio_conv.v[sirio_conv.len - 1].role ==
+                      SIRIO_ROLE_SYSTEM);
+    SIRIO_TEST_ASSERT(strstr(
+        sirio_conv.v[sirio_conv.len - 1].text,
+        "Current model: openai/gpt-5.6-terra\n"
+        "Current reasoning: low") != NULL);
+    SIRIO_TEST_ASSERT(w.session_dirty);
     SIRIO_TEST_ASSERT(agent_worker_step_reasoning(
         &w, -1, &at_limit, error, sizeof(error)));
     SIRIO_TEST_ASSERT(at_limit);
@@ -1568,6 +1580,10 @@ static void test_runtime_selection_and_reasoning_steps(void) {
     SIRIO_TEST_ASSERT(engine.model &&
                       !strcmp(engine.model->name, "deepseek-v4-pro"));
     SIRIO_TEST_ASSERT(sirio_conv.v[2].provider_state_json == NULL);
+    SIRIO_TEST_ASSERT(strstr(
+        sirio_conv.v[sirio_conv.len - 1].text,
+        "Current model: deepseek/deepseek-v4-pro\n"
+        "Current reasoning: max") != NULL);
 
     sirio_conv.v[2].provider_state_json = xstrdup("opaque-again");
     conv_recount_chars();
@@ -1594,6 +1610,10 @@ static void test_runtime_selection_and_reasoning_steps(void) {
                       !strcmp(engine.model->name, "gpt-5.6-luna"));
     SIRIO_TEST_ASSERT(engine.reasoning == SIRIO_REASONING_LOW);
     SIRIO_TEST_ASSERT(sirio_conv.v[2].provider_state_json == NULL);
+    SIRIO_TEST_ASSERT(strstr(
+        sirio_conv.v[sirio_conv.len - 1].text,
+        "Current model: openai/gpt-5.6-luna\n"
+        "Current reasoning: low") != NULL);
     test_step_model_at_limit = true;
     SIRIO_TEST_ASSERT(agent_worker_step_model(
         &w, -1, &at_limit, error, sizeof(error)));
@@ -1736,6 +1756,74 @@ static bool sirio_test_write_models(const char *home, const char *json) {
     return ok;
 }
 
+static void test_system_prompt_includes_runtime_model_catalog(void) {
+    char home_template[] = "/tmp/sirio-system-models-XXXXXX";
+    char *home = mkdtemp(home_template);
+    SIRIO_TEST_ASSERT(home != NULL);
+    if (!home) return;
+    SIRIO_TEST_ASSERT(sirio_test_write_models(
+        home, sirio_test_models_json));
+
+    char models_path[PATH_MAX];
+    snprintf(models_path, sizeof(models_path),
+             "%s/.sirio/models.json", home);
+    char error[160] = {0};
+    sirio_model_store *models = sirio_model_store_load(
+        models_path, error, sizeof(error));
+    SIRIO_TEST_ASSERT(models != NULL);
+    if (models) {
+        agent_worker worker;
+        test_worker_init(&worker);
+        agent_config config;
+        sirio_config_defaults(&config);
+        sirio_engine engine = {
+            .provider = SIRIO_PROVIDER_OPENCODE_GO,
+            .model = sirio_model_find_for_provider(
+                SIRIO_PROVIDER_OPENCODE_GO, "deepseek-v4-flash"),
+            .models = models,
+            .reasoning = SIRIO_REASONING_NONE,
+        };
+        worker.cfg = &config;
+        worker.engine = &engine;
+
+        char *prompt = sirio_build_system_message(&worker);
+        SIRIO_TEST_ASSERT(prompt != NULL);
+        const char *runtime = prompt ? strstr(
+            prompt, "[Runtime model context]") : NULL;
+        const char *completion = prompt ? strstr(
+            prompt, "Verification and completion:") : NULL;
+        SIRIO_TEST_ASSERT(runtime != NULL);
+        SIRIO_TEST_ASSERT(completion != NULL && runtime > completion);
+        SIRIO_TEST_ASSERT(prompt && strstr(
+            prompt,
+            "Current model: opencode-go/deepseek-v4-flash\n"
+            "Current reasoning: none"));
+        SIRIO_TEST_ASSERT(prompt && strstr(
+            prompt,
+            "- opencode-go/deepseek-v4-flash [current, interface]; "
+            "supported reasoning: none, low, high, max; selected: none"));
+        SIRIO_TEST_ASSERT(prompt && strstr(
+            prompt, "- openai/gpt-5.6-luna [interface]"));
+        SIRIO_TEST_ASSERT(prompt && strstr(
+            prompt, "- deepseek/deepseek-v4-flash [subagent-only]"));
+        SIRIO_TEST_ASSERT(prompt && strstr(
+            prompt, "- openai/gpt-5.6-sol [subagent-only]"));
+        SIRIO_TEST_ASSERT(prompt && strstr(
+            prompt, "- opencode-go/glm-5.3 [subagent-only]"));
+        SIRIO_TEST_ASSERT(prompt && strstr(
+            prompt, "Calls are synchronous"));
+        free(prompt);
+        test_worker_free(&worker);
+        sirio_model_store_destroy(models);
+    }
+
+    char sirio_dir[PATH_MAX];
+    snprintf(sirio_dir, sizeof(sirio_dir), "%s/.sirio", home);
+    SIRIO_TEST_ASSERT(unlink(models_path) == 0);
+    SIRIO_TEST_ASSERT(rmdir(sirio_dir) == 0);
+    SIRIO_TEST_ASSERT(rmdir(home) == 0);
+}
+
 static void test_main_parses_options_before_auth(void) {
     char home_template[] = "/tmp/sirio-main-auth-XXXXXX";
     char *home = mkdtemp(home_template);
@@ -1864,7 +1952,7 @@ static void test_main_parses_options_before_auth(void) {
     SIRIO_TEST_ASSERT(root_specialist.status == 2);
     SIRIO_TEST_ASSERT(root_specialist.err &&
                       strstr(root_specialist.err,
-                             "available only through subprocess"));
+                             "available only through subagent"));
     sirio_test_capture_free(&root_specialist);
 
     SIRIO_TEST_ASSERT(setenv(SIRIO_SUBPROCESS_DEPTH_ENV, "1", 1) == 0);
@@ -1994,7 +2082,7 @@ static void test_main_auth_and_selection_actions(void) {
     SIRIO_TEST_ASSERT(models.out && strstr(models.out, "gpt-5.6-luna"));
     SIRIO_TEST_ASSERT(models.out && strstr(models.out, "active true"));
     SIRIO_TEST_ASSERT(models.out && strstr(models.out, "scope interface"));
-    SIRIO_TEST_ASSERT(models.out && strstr(models.out, "scope subprocess"));
+    SIRIO_TEST_ASSERT(models.out && strstr(models.out, "scope subagent"));
     SIRIO_TEST_ASSERT(!strstr(models.out, "deepseek-v4-flash"));
     sirio_test_capture_free(&models);
 
@@ -2011,7 +2099,7 @@ static void test_main_auth_and_selection_actions(void) {
     SIRIO_TEST_ASSERT(interface_models.out &&
                       strstr(interface_models.out, "glm-5.3"));
     SIRIO_TEST_ASSERT(interface_models.out &&
-                      strstr(interface_models.out, "scope subprocess"));
+                      strstr(interface_models.out, "scope subagent"));
     sirio_test_capture_free(&interface_models);
 
     char *models_global_first_argv[] = {
@@ -2063,14 +2151,14 @@ static void test_main_auth_and_selection_actions(void) {
         3, conflict_argv, NULL);
     SIRIO_TEST_ASSERT(conflict.status == 2);
     SIRIO_TEST_ASSERT(conflict.err &&
-                      strstr(conflict.err, "available only through subprocess"));
+                      strstr(conflict.err, "available only through subagent"));
     sirio_test_capture_free(&conflict);
 
     char *glm_argv[] = {"sirio", "--model", "glm-5.3"};
     sirio_main_capture glm = sirio_test_capture_main(3, glm_argv, NULL);
     SIRIO_TEST_ASSERT(glm.status == 2);
     SIRIO_TEST_ASSERT(glm.err &&
-                      strstr(glm.err, "available only through subprocess"));
+                      strstr(glm.err, "available only through subagent"));
     sirio_test_capture_free(&glm);
 
     char *bad_stdin_argv[] = {
@@ -2877,7 +2965,7 @@ static int sirio_test_subprocess_child(int argc, char **argv) {
         strcmp(argv[4], expected_reasoning) ||
         strcmp(argv[5], "--non-interactive") ||
         strcmp(argv[6], "-p") || !depth || strcmp(depth, "1")) {
-        fputs("unexpected subprocess arguments\n", stderr);
+        fputs("unexpected subagent arguments\n", stderr);
         return 9;
     }
     if (specialist) {
@@ -2890,7 +2978,7 @@ static int sirio_test_subprocess_child(int argc, char **argv) {
         return 7;
     }
     if (strcmp(argv[7], "delegated task")) {
-        fputs("unexpected subprocess prompt\n", stderr);
+        fputs("unexpected subagent prompt\n", stderr);
         return 9;
     }
     fputs("delegated answer\n", stdout);
@@ -2913,12 +3001,13 @@ int main(int argc, char **argv) {
     test_cloud_option_mapping();
     test_cloud_option_rejections();
     test_system_prompt_order();
+    test_system_prompt_includes_runtime_model_catalog();
     test_reasoning_is_rendered_and_captured();
     test_raw_bridge_events_bypass_stream_parser();
     test_cloud_context_injections();
     test_native_argument_contract_validation();
     test_every_native_tool_has_a_working_portable_schema();
-    test_subprocess_tool_runs_on_the_host();
+    test_subagent_tool_runs_on_the_host();
     test_thinking_tool_calls_allow_direct_calls();
     test_provider_usage_anchors_context_accounting();
     test_native_multi_tool_round_preserves_provider_order();

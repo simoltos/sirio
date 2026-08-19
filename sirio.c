@@ -407,7 +407,8 @@ static int sirio_resolve_selection(const sirio_cli_options *options,
         if (!model) return 2;
         provider = model->provider;
     } else if (subprocess) {
-        snprintf(error, error_len, "subprocess requires an explicit model");
+        snprintf(error, error_len,
+                 "subagent process requires an explicit model");
         return 2;
     } else {
         const sirio_model_info *last_model = NULL;
@@ -559,8 +560,10 @@ static int sirio_host_select_model(sirio_engine *engine,
     if (engine->cancel_poll)
         sirio_bridge_set_cancel_poll(
             bridge, engine->cancel_poll, engine->cancel_poll_private_data);
-    sirio_model_store_destroy(host->models);
+    sirio_model_store *old_models = host->models;
     host->models = models;
+    engine->models = models;
+    sirio_model_store_destroy(old_models);
     if (old_bridge) sirio_bridge_destroy(old_bridge);
     return 0;
 }
@@ -886,7 +889,7 @@ static int sirio_run_action(const sirio_cli_options *options,
                 printf("%-22s %-10s scope %-10s active %-5s last effort %s\n",
                        model->name, provider->name,
                        sirio_model_store_is_interface_model(models, model) ?
-                       "interface" : "subprocess",
+                       "interface" : "subagent",
                        active ? "true" : "false",
                        sirio_reasoning_name(effort));
             }
@@ -1198,6 +1201,7 @@ int sirio_main(int argc, char **argv) {
     sirio_engine engine = {
         .provider = provider,
         .model = model,
+        .models = models,
         .reasoning = sirio_model_store_effort(models, model),
         .select = sirio_host_select_model,
         .step_model = sirio_host_step_model,

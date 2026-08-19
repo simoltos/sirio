@@ -907,7 +907,7 @@ static void test_model_store_uses_configured_catalog_and_interface(void) {
         TEST_ASSERT(glm != NULL);
         TEST_ASSERT(sirio_model_store_resolve_interface(
             store, "opencode-go/glm-5.3", error, sizeof(error)) == NULL);
-        TEST_ASSERT(strstr(error, "only through subprocess") != NULL);
+        TEST_ASSERT(strstr(error, "only through subagent") != NULL);
         sirio_model_store_destroy(store);
     }
 

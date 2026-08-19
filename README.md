@@ -76,7 +76,7 @@ chmod 600 ~/.sirio/models.json
 Only models listed in a provider array are configured. `interface.models` is
 an ordered subset, using full `provider/model` identifiers, available to the
 base interface. Active configured models outside that list are available only
-through `subprocess`; `active: false` disables a model everywhere. Provider
+through `subagent`; `active: false` disables a model everywhere. Provider
 arrays may be omitted when none of their models are needed.
 
 `interface.last_used` has exactly one field, `model`, whose value is either
@@ -96,7 +96,7 @@ Then save credentials for the providers you configured:
 
 Without `--model`, Sirio reuses the active `interface.last_used` model when its
 credentials are available, then falls back through `interface.models` in
-order. Use `./sirio catalog --models` to inspect `interface` and `subprocess`
+order. Use `./sirio catalog --models` to inspect `interface` and `subagent`
 scope.
 
 Then start the interface, or run one prompt:
@@ -117,7 +117,7 @@ and canonical rewriting.
 `./sirio --help` lists the available options. `make test` runs the tests and
 `make sanitize` repeats them with ASan and UBSan.
 
-Agents can use the `subprocess` tool to delegate focused work to another
+Agents can use the `subagent` tool to delegate focused work to another
 host-side agent process with inherited workspace, configuration and
 authentication. The optional `model` argument selects any active catalog model
 using `provider/model`; omitting it inherits the current model.

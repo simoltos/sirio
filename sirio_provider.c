@@ -4005,7 +4005,7 @@ static const sirio_model_info *model_store_resolve(
                 return NULL;
             }
             auth_store_error(error, error_len,
-                             "%s/%s is available only through subprocess",
+                             "%s/%s is available only through subagent",
                              sirio_provider_name(
                                  unscoped_match->model->provider),
                              unscoped_match->model->name);
