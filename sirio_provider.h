@@ -119,6 +119,9 @@ const sirio_model_info *sirio_model_at(size_t index);
 const sirio_model_info *sirio_model_find(const char *name);
 const sirio_model_info *sirio_model_find_for_provider(
     sirio_provider provider, const char *name);
+const sirio_model_info *sirio_model_resolve(
+    sirio_provider provider_hint, const char *name,
+    char *error, size_t error_len);
 const char *sirio_reasoning_name(sirio_reasoning_effort effort);
 bool sirio_reasoning_parse(const char *name,
                            sirio_reasoning_effort *effort_out);
@@ -129,46 +132,42 @@ bool sirio_model_step_reasoning(const sirio_model_info *model,
                                 int direction,
                                 sirio_reasoning_effort *next_out);
 
-/* User-created model selection state. models.json is authoritative for which
- * catalog models are configured, which belong to the base interface, their
- * active state and last effort, and the interface's single last selection.
- * Model capabilities remain authoritative in the compiled provider catalog. */
-typedef struct sirio_model_store sirio_model_store;
+/* default.json stores only the ordered interface model set and its last
+ * selection. Model metadata remains authoritative in the compiled catalog.
+ * Loading a missing file succeeds with an empty store. */
+typedef struct sirio_default_store sirio_default_store;
 
-sirio_model_store *sirio_model_store_load(const char *path,
-                                          char *error, size_t error_len);
-int sirio_model_store_save(const sirio_model_store *store, const char *path,
-                           char *error, size_t error_len);
-void sirio_model_store_destroy(sirio_model_store *store);
-size_t sirio_model_store_count(const sirio_model_store *store,
-                               sirio_provider provider);
-const sirio_model_info *sirio_model_store_at(const sirio_model_store *store,
-                                             sirio_provider provider,
-                                             size_t index,
-                                             sirio_reasoning_effort *effort_out,
-                                             bool *active_out);
-const sirio_model_info *sirio_model_store_first_active(
-    const sirio_model_store *store, sirio_provider provider,
-    sirio_reasoning_effort *effort_out);
-const sirio_model_info *sirio_model_store_resolve(
-    const sirio_model_store *store, sirio_provider provider_hint,
-    const char *name, char *error, size_t error_len);
-size_t sirio_model_store_interface_count(const sirio_model_store *store);
-const sirio_model_info *sirio_model_store_interface_at(
-    const sirio_model_store *store, size_t index,
-    sirio_reasoning_effort *effort_out, bool *active_out);
-bool sirio_model_store_is_interface_model(
-    const sirio_model_store *store, const sirio_model_info *model);
-const sirio_model_info *sirio_model_store_resolve_interface(
-    const sirio_model_store *store, const char *name,
+sirio_default_store *sirio_default_store_load(
+    const char *path, char *error, size_t error_len);
+int sirio_default_store_save(const sirio_default_store *store,
+                             const char *path,
+                             char *error, size_t error_len);
+void sirio_default_store_destroy(sirio_default_store *store);
+int sirio_default_store_validate(const sirio_default_store *store,
+                                 char *error, size_t error_len);
+size_t sirio_default_store_count(const sirio_default_store *store);
+const sirio_model_info *sirio_default_store_at(
+    const sirio_default_store *store, size_t index);
+bool sirio_default_store_contains(const sirio_default_store *store,
+                                  const sirio_model_info *model);
+const sirio_model_info *sirio_default_store_resolve(
+    const sirio_default_store *store, const char *name,
     char *error, size_t error_len);
-sirio_reasoning_effort sirio_model_store_effort(
-    const sirio_model_store *store, const sirio_model_info *model);
-bool sirio_model_store_last_used(const sirio_model_store *store,
-                                 const sirio_model_info **model_out);
-int sirio_model_store_set_last_used(sirio_model_store *store,
-                                    const sirio_model_info *model,
-                                    sirio_reasoning_effort effort);
+sirio_reasoning_effort sirio_default_store_reasoning(
+    const sirio_default_store *store, const sirio_model_info *model);
+bool sirio_default_store_last_used(
+    const sirio_default_store *store,
+    const sirio_model_info **model_out,
+    sirio_reasoning_effort *reasoning_out);
+int sirio_default_store_set_last_used(
+    sirio_default_store *store, const sirio_model_info *model,
+    sirio_reasoning_effort reasoning);
+int sirio_default_store_add(sirio_default_store *store,
+                            const sirio_model_info *model,
+                            bool *changed_out);
+int sirio_default_store_remove(sirio_default_store *store,
+                               const char *reference,
+                               bool *changed_out);
 
 /* Opaque host-side configuration and credential store.  Loading a missing
  * file succeeds with an empty store.  Saving creates parent directories and

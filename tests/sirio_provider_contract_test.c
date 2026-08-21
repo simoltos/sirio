@@ -773,52 +773,34 @@ static void test_auth_store_accepts_missing_providers(void) {
     unlink(path);
 }
 
-static void test_model_store_rejects_wrong_shape(void) {
-    char path[] = "/tmp/sirio-invalid-models-XXXXXX";
+static void test_default_store_rejects_wrong_shape(void) {
+    char path[] = "/tmp/sirio-invalid-defaults-XXXXXX";
     int fd = mkstemp(path);
     TEST_ASSERT(fd >= 0);
     if (fd < 0) return;
     TEST_ASSERT(close(fd) == 0);
     static const char *const invalid[] = {
         "{}\n",
-        "{\"deepseek\":[],\"last_used\":{}}\n",
-        "{\"interface\":{\"models\":[],"
-            "\"last_used\":{\"model\":null}}}\n",
-        "{\"interface\":{\"models\":[\"deepseek-v4-flash\"],"
-            "\"last_used\":{\"model\":null}},\"opencode-go\":[{"
-            "\"id\":\"deepseek-v4-flash\",\"last_effort\":\"none\","
-            "\"active\":true}]}\n",
-        "{\"interface\":{\"models\":[\"opencode-go/deepseek-v4-flash\","
+        "{\"models\":[]}\n",
+        "{\"models\":[],\"last_used\":{\"model\":null}}\n",
+        "{\"models\":[\"deepseek-v4-flash\"],"
+            "\"last_used\":{\"model\":null,\"reasoning\":null}}\n",
+        "{\"models\":[\"opencode-go/deepseek-v4-flash\","
             "\"opencode-go/deepseek-v4-flash\"],"
-            "\"last_used\":{\"model\":null}},"
-            "\"opencode-go\":[{\"id\":\"deepseek-v4-flash\","
-            "\"last_effort\":\"none\",\"active\":true}]}\n",
-        "{\"interface\":{\"models\":[\"opencode-go/unknown\"],"
-            "\"last_used\":{\"model\":null}},\"opencode-go\":[]}\n",
-        "{\"interface\":{\"models\":[\"opencode-go/deepseek-v4-flash\"],"
+            "\"last_used\":{\"model\":null,\"reasoning\":null}}\n",
+        "{\"models\":[\"opencode-go/deepseek-v4-flash\"],"
             "\"last_used\":{\"model\":"
-            "\"opencode-go/deepseek-v4-pro\"}},"
-            "\"opencode-go\":[{\"id\":\"deepseek-v4-flash\","
-            "\"last_effort\":\"none\",\"active\":true},{"
-            "\"id\":\"deepseek-v4-pro\",\"last_effort\":\"high\","
-            "\"active\":true}]}\n",
-        "{\"interface\":{\"models\":[\"kimi/k3\"],"
-            "\"last_used\":{\"model\":null}},"
-            "\"kimi\":[{\"id\":\"k3\",\"alias\":\"k3\","
-            "\"last_effort\":\"high\",\"active\":true}]}\n",
-        "{\"interface\":{\"models\":[\"kimi/k3\"],"
-            "\"last_used\":{\"model\":null}},"
-            "\"kimi\":[{\"id\":\"k3\",\"last_effort\":\"high\","
-            "\"active\":\"true\"}]}\n",
-        "{\"interface\":{\"models\":[\"kimi/k3\"],"
-            "\"last_used\":{\"model\":null,\"provider\":\"kimi\"}},"
-            "\"kimi\":[{\"id\":\"k3\",\"last_effort\":\"high\","
-            "\"active\":true}]}\n",
-        "{\"interface\":{\"models\":["
-            "\"opencode-go/deepseek-v4-flash\"],"
-            "\"last_used\":{\"model\":null}},\"opencode-go\":[{"
-            "\"id\":\"deepseek-v4-flash\","
-            "\"last_effort\":\"medium\",\"active\":true}]}\n",
+            "\"opencode-go/deepseek-v4-pro\",\"reasoning\":\"high\"}}\n",
+        "{\"models\":[\"opencode-go/deepseek-v4-flash\"],"
+            "\"last_used\":{\"model\":null,\"reasoning\":\"none\"}}\n",
+        "{\"models\":[\"opencode-go/deepseek-v4-flash\"],"
+            "\"last_used\":{\"model\":"
+            "\"opencode-go/deepseek-v4-flash\","
+            "\"reasoning\":\"extreme\"}}\n",
+        "{\"models\":[],\"last_used\":{\"model\":null,"
+            "\"reasoning\":null},\"active\":true}\n",
+        "{\"interface\":{\"models\":[],\"last_used\":{"
+            "\"model\":null}}}\n",
     };
     char error[256] = {0};
     for (size_t i = 0; i < sizeof(invalid) / sizeof(invalid[0]); i++) {
@@ -829,86 +811,65 @@ static void test_model_store_rejects_wrong_shape(void) {
         size_t length = strlen(invalid[i]);
         TEST_ASSERT(write(fd, invalid[i], length) == (ssize_t)length);
         TEST_ASSERT(close(fd) == 0);
-        sirio_model_store *store = sirio_model_store_load(
+        sirio_default_store *store = sirio_default_store_load(
             path, error, sizeof(error));
         TEST_ASSERT(store == NULL);
-        TEST_ASSERT(strstr(error, "invalid models file") != NULL);
-        sirio_model_store_destroy(store);
+        TEST_ASSERT(strstr(error, "invalid default file") != NULL);
+        sirio_default_store_destroy(store);
     }
     unlink(path);
 
-    sirio_model_store *missing = sirio_model_store_load(
+    sirio_default_store *missing = sirio_default_store_load(
         path, error, sizeof(error));
-    TEST_ASSERT(missing == NULL);
-    TEST_ASSERT(strstr(error, "does not exist") != NULL);
-    sirio_model_store_destroy(missing);
+    TEST_ASSERT(missing != NULL);
+    TEST_ASSERT(sirio_default_store_count(missing) == 0);
+    TEST_ASSERT(error[0] == '\0');
+    sirio_default_store_destroy(missing);
 }
 
-static void test_model_store_uses_configured_catalog_and_interface(void) {
-    char path[] = "/tmp/sirio-reconcile-models-XXXXXX";
+static void test_default_store_uses_catalog_and_interface_order(void) {
+    char path[] = "/tmp/sirio-default-order-XXXXXX";
     int fd = mkstemp(path);
     TEST_ASSERT(fd >= 0);
     if (fd < 0) return;
     static const char partial[] =
-        "{\"interface\":{\"models\":[\"openai/gpt-5.6-luna\","
+        "{\"models\":[\"openai/gpt-5.6-luna\","
         "\"opencode-go/deepseek-v4-flash\","
         "\"opencode-go/deepseek-v4-pro\"],"
         "\"last_used\":{\"model\":"
-        "\"opencode-go/deepseek-v4-flash\"}},"
-        "\"openai\":[{\"id\":\"gpt-5.6-luna\","
-        "\"last_effort\":\"low\",\"active\":true}],"
-        "\"opencode-go\":[{\"id\":\"deepseek-v4-flash\","
-        "\"last_effort\":\"none\",\"active\":false},{"
-        "\"id\":\"deepseek-v4-pro\",\"last_effort\":\"high\","
-        "\"active\":true},{\"id\":\"glm-5.3\","
-        "\"last_effort\":\"high\",\"active\":true}]}\n";
+        "\"opencode-go/deepseek-v4-flash\","
+        "\"reasoning\":\"none\"}}\n";
     TEST_ASSERT(write(fd, partial, sizeof(partial) - 1) ==
                 (ssize_t)(sizeof(partial) - 1));
     TEST_ASSERT(close(fd) == 0);
 
     char error[256] = {0};
-    sirio_model_store *store = sirio_model_store_load(
+    sirio_default_store *store = sirio_default_store_load(
         path, error, sizeof(error));
     TEST_ASSERT(store != NULL);
     if (store) {
-        TEST_ASSERT(sirio_model_store_count(
-            store, SIRIO_PROVIDER_DEEPSEEK) == 0);
-        TEST_ASSERT(sirio_model_store_count(
-            store, SIRIO_PROVIDER_OPENAI) == 1);
-        TEST_ASSERT(sirio_model_store_count(
-            store, SIRIO_PROVIDER_OPENCODE_GO) == 3);
-        TEST_ASSERT(sirio_model_store_count(
-            store, SIRIO_PROVIDER_KIMI) == 0);
-        TEST_ASSERT(sirio_model_store_interface_count(store) == 3);
-
-        bool active = true;
-        const sirio_model_info *flash = sirio_model_store_at(
-            store, SIRIO_PROVIDER_OPENCODE_GO, 0, NULL, &active);
-        TEST_ASSERT(flash && !strcmp(flash->name, DEEPSEEK_MODEL));
-        TEST_ASSERT(!active);
-        const sirio_model_info *luna = sirio_model_store_interface_at(
-            store, 0, NULL, &active);
+        TEST_ASSERT(sirio_default_store_validate(
+            store, error, sizeof(error)) == 0);
+        TEST_ASSERT(sirio_default_store_count(store) == 3);
+        const sirio_model_info *luna = sirio_default_store_at(store, 0);
         TEST_ASSERT(luna && !strcmp(luna->name, OPENAI_MODEL));
-        TEST_ASSERT(active);
-        const sirio_model_info *first = sirio_model_store_first_active(
-            store, SIRIO_PROVIDER_OPENCODE_GO, NULL);
-        TEST_ASSERT(first && !strcmp(first->name, DEEPSEEK_PRO_MODEL));
-        TEST_ASSERT(sirio_model_store_resolve(
-            store, SIRIO_PROVIDER_OPENCODE_GO, DEEPSEEK_MODEL,
-            error, sizeof(error)) == NULL);
-        TEST_ASSERT(strstr(error, "inactive") != NULL);
+        const sirio_model_info *flash = sirio_default_store_at(store, 1);
+        TEST_ASSERT(flash && !strcmp(flash->name, DEEPSEEK_MODEL));
         const sirio_model_info *last = NULL;
-        TEST_ASSERT(!sirio_model_store_last_used(store, &last));
-        TEST_ASSERT(sirio_model_store_set_last_used(
-            store, flash, SIRIO_REASONING_NONE) != 0);
-        const sirio_model_info *glm = sirio_model_store_resolve(
-            store, SIRIO_PROVIDER_OPENCODE_GO, OPENCODE_GO_GLM_MODEL,
-            error, sizeof(error));
-        TEST_ASSERT(glm != NULL);
-        TEST_ASSERT(sirio_model_store_resolve_interface(
+        sirio_reasoning_effort reasoning = SIRIO_REASONING_HIGH;
+        TEST_ASSERT(sirio_default_store_last_used(
+            store, &last, &reasoning));
+        TEST_ASSERT(last == flash);
+        TEST_ASSERT(reasoning == SIRIO_REASONING_NONE);
+        TEST_ASSERT(sirio_default_store_resolve(
+            store, OPENAI_MODEL, error, sizeof(error)) == luna);
+        TEST_ASSERT(sirio_default_store_resolve(
             store, "opencode-go/glm-5.3", error, sizeof(error)) == NULL);
         TEST_ASSERT(strstr(error, "only through subagent") != NULL);
-        sirio_model_store_destroy(store);
+        TEST_ASSERT(sirio_model_resolve(
+            SIRIO_PROVIDER_NONE, "opencode-go/glm-5.3",
+            error, sizeof(error)) != NULL);
+        sirio_default_store_destroy(store);
     }
 
     char *unchanged = NULL;
@@ -922,90 +883,105 @@ static void test_model_store_uses_configured_catalog_and_interface(void) {
     unlink(path);
 }
 
-static void test_model_store_persists_single_interface_selection(void) {
-    char path[] = "/tmp/sirio-models-XXXXXX";
+static void test_default_store_mutates_and_persists_selection(void) {
+    char path[] = "/tmp/sirio-defaults-XXXXXX";
     int fd = mkstemp(path);
     TEST_ASSERT(fd >= 0);
     if (fd < 0) return;
     static const char configured[] =
-        "{\"interface\":{\"models\":[\"openai/gpt-5.6-luna\","
+        "{\"models\":[\"openai/gpt-5.6-luna\","
         "\"deepseek/deepseek-v4-pro\"],"
-        "\"last_used\":{\"model\":null}},"
-        "\"openai\":[{\"id\":\"gpt-5.6-luna\","
-        "\"last_effort\":\"low\",\"active\":true}],"
-        "\"deepseek\":[{\"id\":\"deepseek-v4-pro\","
-        "\"last_effort\":\"high\",\"active\":true},{"
-        "\"id\":\"deepseek-v4-flash\",\"last_effort\":\"high\","
-        "\"active\":false}],"
-        "\"opencode-go\":[{\"id\":\"glm-5.3\","
-        "\"last_effort\":\"high\",\"active\":true}]}\n";
+        "\"last_used\":{\"model\":null,\"reasoning\":null}}\n";
     TEST_ASSERT(write(fd, configured, sizeof(configured) - 1) ==
                 (ssize_t)(sizeof(configured) - 1));
     TEST_ASSERT(close(fd) == 0);
 
     char error[256] = {0};
-    sirio_model_store *store = sirio_model_store_load(
+    sirio_default_store *store = sirio_default_store_load(
         path, error, sizeof(error));
     TEST_ASSERT(store != NULL);
     if (!store) return;
-    TEST_ASSERT(sirio_model_store_count(
-        store, SIRIO_PROVIDER_OPENAI) == 1);
-    TEST_ASSERT(sirio_model_store_count(
-        store, SIRIO_PROVIDER_DEEPSEEK) == 2);
-    TEST_ASSERT(sirio_model_store_count(
-        store, SIRIO_PROVIDER_OPENCODE_GO) == 1);
-    TEST_ASSERT(sirio_model_store_count(
-        store, SIRIO_PROVIDER_KIMI) == 0);
-    const sirio_model_info *luna = sirio_model_store_resolve(
-        store, SIRIO_PROVIDER_NONE, OPENAI_MODEL,
-        error, sizeof(error));
+    const sirio_model_info *luna = sirio_default_store_resolve(
+        store, OPENAI_MODEL, error, sizeof(error));
     TEST_ASSERT(luna && !strcmp(luna->name, OPENAI_MODEL));
-    TEST_ASSERT(sirio_model_store_resolve(
-        store, SIRIO_PROVIDER_NONE, "luna", error, sizeof(error)) == NULL);
-    TEST_ASSERT(sirio_model_store_resolve_interface(
+    TEST_ASSERT(sirio_default_store_resolve(
         store, "deepseek/deepseek-v4-flash",
         error, sizeof(error)) == NULL);
-    TEST_ASSERT(strstr(error, "inactive") != NULL);
-    TEST_ASSERT(sirio_model_store_set_last_used(
+    TEST_ASSERT(strstr(error, "only through subagent") != NULL);
+    TEST_ASSERT(sirio_default_store_set_last_used(
         store, luna, SIRIO_REASONING_HIGH) == 0);
     const sirio_model_info *deepseek_pro = sirio_model_find_for_provider(
         SIRIO_PROVIDER_DEEPSEEK, DEEPSEEK_PRO_MODEL);
-    TEST_ASSERT(sirio_model_store_set_last_used(
+    TEST_ASSERT(sirio_default_store_set_last_used(
         store, deepseek_pro, SIRIO_REASONING_MAX) == 0);
     const sirio_model_info *glm = sirio_model_find_for_provider(
         SIRIO_PROVIDER_OPENCODE_GO, OPENCODE_GO_GLM_MODEL);
-    TEST_ASSERT(sirio_model_store_set_last_used(
+    TEST_ASSERT(sirio_default_store_set_last_used(
         store, glm, SIRIO_REASONING_HIGH) != 0);
-    TEST_ASSERT(sirio_model_store_set_last_used(
+    TEST_ASSERT(sirio_default_store_set_last_used(
         store, luna, SIRIO_REASONING_HIGH) == 0);
-    TEST_ASSERT(sirio_model_store_save(store, path,
-                                       error, sizeof(error)) == 0);
-    sirio_model_store_destroy(store);
+    bool changed = true;
+    TEST_ASSERT(sirio_default_store_add(store, luna, &changed) == 0);
+    TEST_ASSERT(!changed);
+    TEST_ASSERT(sirio_default_store_add(store, glm, &changed) == 0);
+    TEST_ASSERT(changed);
+    TEST_ASSERT(sirio_default_store_remove(
+        store, "retired/old-model", &changed) == 0);
+    TEST_ASSERT(!changed);
+    TEST_ASSERT(sirio_default_store_save(store, path,
+                                         error, sizeof(error)) == 0);
+    sirio_default_store_destroy(store);
 
     char *text = NULL;
     size_t length = 0;
     TEST_ASSERT(provider_read_auth_file(path, &text, &length) == 0);
-    TEST_ASSERT(text && strstr(text, "\"openai\": ["));
-    TEST_ASSERT(text && !strstr(text, "\"kimi\":"));
-    TEST_ASSERT(text && !strstr(text, "\"alias\""));
-    TEST_ASSERT(text && strstr(text, "\"last_effort\": \"high\""));
-    TEST_ASSERT(text && strstr(text, "\"active\": true"));
+    TEST_ASSERT(text && strstr(text, "\"models\": ["));
+    TEST_ASSERT(text && !strstr(text, "\"openai\":"));
+    TEST_ASSERT(text && !strstr(text, "\"active\""));
+    TEST_ASSERT(text && !strstr(text, "\"last_effort\""));
     TEST_ASSERT(text && strstr(text,
-        "\"last_used\": {\"model\": \"openai/gpt-5.6-luna\"}"));
-    TEST_ASSERT(text && !strstr(text, "\"provider\":"));
-    TEST_ASSERT(text && !strstr(text, "context_tokens"));
-    TEST_ASSERT(text && !strstr(text, "max_output_tokens"));
+        "\"last_used\": {\"model\": \"openai/gpt-5.6-luna\", "
+        "\"reasoning\": \"high\"}"));
     free(text);
 
-    store = sirio_model_store_load(path, error, sizeof(error));
+    store = sirio_default_store_load(path, error, sizeof(error));
     TEST_ASSERT(store != NULL);
     if (store) {
         const sirio_model_info *model = NULL;
-        TEST_ASSERT(sirio_model_store_last_used(store, &model));
+        sirio_reasoning_effort reasoning = SIRIO_REASONING_NONE;
+        TEST_ASSERT(sirio_default_store_last_used(
+            store, &model, &reasoning));
         TEST_ASSERT(model == sirio_model_find(OPENAI_MODEL));
-        TEST_ASSERT(sirio_model_store_effort(store, model) ==
-                    SIRIO_REASONING_HIGH);
-        sirio_model_store_destroy(store);
+        TEST_ASSERT(reasoning == SIRIO_REASONING_HIGH);
+        TEST_ASSERT(sirio_default_store_count(store) == 3);
+        sirio_default_store_destroy(store);
+    }
+    unlink(path);
+
+    fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, S_IRUSR | S_IWUSR);
+    TEST_ASSERT(fd >= 0);
+    static const char stale[] =
+        "{\"models\":[\"retired/old-model\","
+        "\"openai/gpt-5.6-luna\"],\"last_used\":{\"model\":"
+        "\"retired/old-model\",\"reasoning\":\"high\"}}\n";
+    if (fd >= 0) {
+        TEST_ASSERT(write(fd, stale, sizeof(stale) - 1) ==
+                    (ssize_t)(sizeof(stale) - 1));
+        TEST_ASSERT(close(fd) == 0);
+    }
+    store = sirio_default_store_load(path, error, sizeof(error));
+    TEST_ASSERT(store != NULL);
+    if (store) {
+        TEST_ASSERT(sirio_default_store_validate(
+            store, error, sizeof(error)) != 0);
+        TEST_ASSERT(strstr(error, "catalog --remove retired/old-model"));
+        TEST_ASSERT(sirio_default_store_remove(
+            store, "retired/old-model", &changed) == 0);
+        TEST_ASSERT(changed);
+        TEST_ASSERT(!sirio_default_store_last_used(store, NULL, NULL));
+        TEST_ASSERT(sirio_default_store_validate(
+            store, error, sizeof(error)) == 0);
+        sirio_default_store_destroy(store);
     }
     unlink(path);
 }
@@ -1227,9 +1203,9 @@ int main(void) {
     test_openai_auth_round_trip();
     test_auth_store_rejects_wrong_shape();
     test_auth_store_accepts_missing_providers();
-    test_model_store_rejects_wrong_shape();
-    test_model_store_uses_configured_catalog_and_interface();
-    test_model_store_persists_single_interface_selection();
+    test_default_store_rejects_wrong_shape();
+    test_default_store_uses_catalog_and_interface_order();
+    test_default_store_mutates_and_persists_selection();
     test_chat_provider_reasoning_requests();
     test_openai_responses_request_and_replay();
     test_openai_responses_stream();

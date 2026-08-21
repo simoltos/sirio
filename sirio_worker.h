@@ -35,14 +35,14 @@ typedef int (*sirio_engine_step_model_fn)(
 /* Selection callbacks return 0 on success, 1 for an operational failure
  * (credentials, I/O, provider setup), and 2 for an invalid selection. */
 
-/* The host owns credentials and models.json. The worker owns interaction and
+/* The host owns credentials and default.json. The worker owns interaction and
  * invokes select only at idle safe points, allowing sirio.c to build a new
  * bridge and swap it transactionally. */
 struct sirio_engine {
     sirio_bridge *bridge;
     sirio_provider provider;
     const sirio_model_info *model;
-    const sirio_model_store *models;
+    const sirio_default_store *defaults;
     sirio_reasoning_effort reasoning;
     sirio_generation_options generation;
     sirio_bridge_cancel_poll cancel_poll;
@@ -50,6 +50,7 @@ struct sirio_engine {
     sirio_engine_select_fn select;
     sirio_engine_step_model_fn step_model;
     void *select_private_data;
+    bool restoring_session;
 };
 
 typedef struct {

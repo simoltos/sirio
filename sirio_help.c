@@ -159,9 +159,13 @@ static void sirio_help_catalog(FILE *fp, const sirio_help_colors *colors) {
     sirio_help_option(fp, colors, "--providers",
                       "List supported providers and credential availability.");
     sirio_help_option(fp, colors, "--models",
-                      "List configured models and their active state.");
+                      "List supported models and their interface scope.");
     sirio_help_option(fp, colors, "--provider PROVIDER",
                       "With --models, restrict the list to one provider.");
+    sirio_help_option(fp, colors, "--default MODEL[,MODEL...]",
+                      "Add models to the main interface.");
+    sirio_help_option(fp, colors, "--remove MODEL[,MODEL...]",
+                      "Remove models from the main interface.");
     sirio_help_option(fp, colors, "-h, --help",
                       "Show help for the catalog command.");
     fputc('\n', fp);
@@ -194,7 +198,7 @@ static void sirio_help_general_options(FILE *fp,
                                        const sirio_help_colors *colors) {
     sirio_help_title(fp, colors, "Options");
     sirio_help_option(fp, colors, "-m, --model MODEL",
-                      "Configured interface model for this invocation.");
+                      "Interface model for this invocation.");
     sirio_help_option(fp, colors, "-p, --prompt TEXT",
                       "Submit the initial prompt.");
     sirio_help_option(fp, colors, "--non-interactive",
@@ -234,7 +238,7 @@ static void sirio_help_commands(FILE *fp, const sirio_help_colors *colors,
     sirio_help_command(fp, colors, colors->red, "/list",
                       "List saved sessions by recent use.");
     sirio_help_command(fp, colors, colors->red, "/model MODEL [THINKING]",
-                      "Change configured interface model while idle.");
+                      "Change interface model while idle.");
     sirio_help_command(fp, colors, colors->red, "/switch ID",
                       "Load a saved session and show recent history.");
     sirio_help_command(fp, colors, colors->red, "/del ID",
@@ -263,7 +267,7 @@ static void sirio_help_commands(FILE *fp, const sirio_help_colors *colors,
     sirio_help_command(fp, colors, colors->purple, "Alt+, / Alt+.",
                        "Decrease or increase reasoning effort while idle.");
     sirio_help_command(fp, colors, colors->purple, "Alt+k / Alt+l",
-                       "Select the previous or next active interface model.");
+                       "Select the previous or next interface model.");
     fputc('\n', fp);
 }
 

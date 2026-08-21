@@ -43,12 +43,11 @@ hosted CI; cover changed contracts and failure paths.
 
 ## Commit & Pull Request Guidelines
 
-The repository has no commit history yet, so no established message convention
-can be inferred. Use focused commits with imperative subjects. Pull
-requests should explain the behavior change, list verification commands, and
-call out changes to provider schemas, the runner protocol, or container
-permissions. Include terminal output only when it clarifies user-visible CLI
-behavior; screenshots are generally unnecessary.
+Existing history uses short imperative subjects. Continue with focused commits
+in that style. Pull requests should explain the behavior change, list
+verification commands, and call out changes to provider schemas, the runner
+protocol, or container permissions. Include terminal output only when it
+clarifies user-visible CLI behavior; screenshots are generally unnecessary.
 
 ## Security & Configuration
 

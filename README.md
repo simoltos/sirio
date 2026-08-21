@@ -1,141 +1,114 @@
 # Sirio
+Sirio is a small terminal coding agent written in C. It adapts the agent layer of [ds4](https://github.com/antirez/ds4) to use model provider APIs instead of the in-process inference engine, and runs file, shell and web tools inside a short-lived Podman container instead of on the host.
 
-Sirio is a small terminal coding agent written in C.
+## Thanks
+Thanks to Salvatore Sanfilippo (antirez) for [ds4](https://github.com/antirez/ds4): Sirio's agent layer derives directly from it. See [LICENSE](LICENSE).
+
+## Motivation
+Most available coding agents are large, layered stacks that are hard to read end to end and ds4's agent layer stood out for the opposite reason: it is compact enough to read, understand and start building on.
+
+Sirio keeps that shape while moving two boundaries. Inference goes to model provider APIs/OAuth, so one small program can drive different models without embedding an inference engine. Tool execution goes into a short-lived Podman container, so file, shell and web tools run off the host: an agent that runs arbitrary commands and edits gets an ephemeral, disposable environment instead of requiring trust or constant supervision. The goal is not a general agent framework: it is a small C program that stays easy to run, inspect and change.
+
+Anyway Sirio is a personal project — a way to understand how a coding agent actually works (the agent loop, tool protocols, provider streaming) by building and using one.
+
+## How it works
+Compared to ds4, Sirio changes where two things happen: inference is delegated to model provider APIs, and tool execution moves from the host into a container. The agent loop itself keeps ds4's shape.
+
+- **Podman is the tool boundary.** Every tool call — file edits, shell commands, web browsing — executes inside a short-lived container started from the repository's `cma` image. The container is created with `--rm`, runs with `--userns=keep-id`, bind-mounts the selected workspace read-write at `/workspace`, and keeps outbound network access for the web and shell tools. The host talks to a tool runner inside the container over a small JSON protocol on pipes.
+
+A run looks like this: your prompt is sent to the model with Sirio's system prompt and tool schemas; when the model emits a tool call, Sirio forwards it to the container and appends the observation to the conversation; the loop repeats until the model answers. Near the context limit Sirio compacts the conversation automatically, summarizing durable state and keeping a recent verbatim tail (`/compact` triggers the same mechanism by hand).
+
+```mermaid
+flowchart LR
+    U["Your terminal"] <--> H["Sirio process (host)"]
+    H <-->|"HTTPS"| P["Model provider API"]
+    H <-->|"JSON over pipes"| C["Podman container (cma image)<br/>tool runner, workspace at /workspace"]
+```
+
+## Provider and models
+Sirio supports four providers:
+- `deepseek` (API key): deepseek-v4-flash, deepseek-v4-pro.
+- `openai` (API key or OAuth login): gpt-5.6-sol, gpt-5.6-terra, gpt-5.6-luna.
+- `opencode-go` (API key): deepseek-v4-flash, deepseek-v4-pro, glm-5.3.
+- `kimi` (API key): k3, k3-256k, kimi-for-coding.
+
+Each catalog entry carries its context size, output limit and supported reasoning efforts (`none`, `low`, `medium`, `high`, `xhigh`, `max`). Models are marked `interface` when they belong to your configured interface set and can drive the main session, or `subagent` when only the `subagent` tool can select them. Inspect the catalog with:
+```sh
+./sirio catalog --providers
+./sirio catalog --models
+```
 
 ## Build
-
-It requires a C11 compiler, libcurl, POSIX threads and Make:
-
+Sirio requires a C11 compiler, libcurl, POSIX threads and Make:
 ```sh
 make sirio
 make install
 ```
 
-`make install` installs the binary in `/usr/local/bin` and asks for superuser
-permissions; set `PREFIX` to choose another system directory.
+`make install` installs an already-built binary in `/usr/local/bin` and asks for superuser permissions. Set `PREFIX` to choose another directory.
 
-Agent runs also require `podman`, an existing image named `cma`, and a compatible
-tool runner inside that image. Build the repository image locally with:
-
+Agent runs also require Podman and the repository's `cma` image:
 ```sh
 ./container/build.sh
 ```
 
-The script compiles the runner inside Linux and tags the result `cma`. The Sirio
-executable never builds or pulls it; `--raw-prompt` does not start a container.
+The script compiles the tool runner inside Linux and tags the image as `cma`; set `CONTAINER_ENGINE` to use a build engine other than Podman. The image is a Debian bookworm-slim multistage build containing the tool runner, headless Chromium and Python 3. Sirio does not build or pull the image automatically. `--raw-prompt` does not start a container.
 
-Podman can show untagged `<none>` images after a build. They may be reusable
-build cache; pruning them frees disk space but can make the next build slower.
+## Configure
+Sirio keeps its state in `~/.sirio/`: `auth.json` (credentials, written atomically with owner-only permissions), `default.json` (the ordered interface model set and the last selection) and `sessions/` (saved sessions, named by SHA).
 
-## Use
-
-Create `~/.sirio/models.json` before configuring credentials, inspecting the
-catalog, or starting an agent. Sirio does not generate or migrate this file. A
-complete starting configuration is:
-
-```json
-{
-  "interface": {
-    "models": [
-      "opencode-go/deepseek-v4-flash",
-      "opencode-go/deepseek-v4-pro"
-    ],
-    "last_used": {"model": null}
-  },
-  "deepseek": [
-    {"id": "deepseek-v4-flash", "last_effort": "high", "active": true},
-    {"id": "deepseek-v4-pro", "last_effort": "high", "active": true}
-  ],
-  "openai": [
-    {"id": "gpt-5.6-sol", "last_effort": "low", "active": true},
-    {"id": "gpt-5.6-terra", "last_effort": "medium", "active": true},
-    {"id": "gpt-5.6-luna", "last_effort": "low", "active": true}
-  ],
-  "opencode-go": [
-    {"id": "deepseek-v4-flash", "last_effort": "none", "active": true},
-    {"id": "deepseek-v4-pro", "last_effort": "high", "active": true},
-    {"id": "glm-5.3", "last_effort": "high", "active": true}
-  ],
-  "kimi": [
-    {"id": "k3", "last_effort": "high", "active": true},
-    {"id": "k3-256k", "last_effort": "high", "active": true},
-    {"id": "kimi-for-coding", "last_effort": "high", "active": true}
-  ]
-}
-```
-
-Create the directory and keep the configuration private:
-
+Choose the interface models, in selection order:
 ```sh
-mkdir -p ~/.sirio
-chmod 700 ~/.sirio
-$EDITOR ~/.sirio/models.json
-chmod 600 ~/.sirio/models.json
+./sirio catalog --default opencode-go/deepseek-v4-flash,opencode-go/deepseek-v4-pro
 ```
 
-Only models listed in a provider array are configured. `interface.models` is
-an ordered subset, using full `provider/model` identifiers, available to the
-base interface. Active configured models outside that list are available only
-through `subagent`; `active: false` disables a model everywhere. Provider
-arrays may be omitted when none of their models are needed.
+The command creates the state directory and default file when needed. It is idempotent, so existing entries are not duplicated. To remove models:
+```sh
+./sirio catalog --remove opencode-go/deepseek-v4-pro
+```
 
-`interface.last_used` has exactly one field, `model`, whose value is either
-`null` or one full identifier from `interface.models`. Sirio updates that field,
-together with the selected model's `last_effort`, after a successful interface
-selection. There are no model aliases; use the model ID, qualifying it with the
-provider whenever the same ID exists under more than one provider.
-
-Then save credentials for the providers you configured:
-
+Authentication is managed separately:
 ```sh
 ./sirio auth --api-key opencode-go
 ./sirio auth --api-key deepseek
-./sirio auth --login openai
+./sirio auth --api-key openai
+./sirio auth --login openai      # interactive OAuth
 ./sirio auth --api-key kimi
+./sirio auth --status            # credential availability, no secrets
 ```
 
-Without `--model`, Sirio reuses the active `interface.last_used` model when its
-credentials are available, then falls back through `interface.models` in
-order. Use `./sirio catalog --models` to inspect `interface` and `subagent`
-scope.
-
-Then start the interface, or run one prompt:
-
+## Run
+Start the interactive interface, or run one prompt:
 ```sh
 ./sirio
 ./sirio -C /path/to/project
 ./sirio --non-interactive -p "Explain this repository"
+./sirio --raw-prompt --non-interactive -p "Say hello"   # no tools, no container
 ```
 
-`/model` selects any active model in `interface.models`, including a model from
-another provider. Alt-k and Alt-l traverse the configured interface order.
+Without `--model`, Sirio reuses the last interface model and reasoning when its credentials are available, then tries the configured interface order. Useful run options include `-m/--model`, `--think LEVEL`, `-n/--tokens N`, `--temp F`, `--top-p F`, `--trace FILE`, `-sys/--system TEXT` and `--edit-upto`. See `./sirio --help` and the command-specific help for the full list.
 
-List or resume saved sessions with `./sirio sessions --list` and
-`./sirio sessions --resume <id>`. See `./sirio sessions --help` for deletion
-and canonical rewriting.
+Inside the interface:
+- **Commands:** `/help`, `/save`, `/compact`, `/list`, `/model`, `/switch`, `/del`, `/strip`, `/history`, `/new`, `/quit`.
+- **Controls:** Ctrl+C interrupts generation; Enter queues text while the agent is busy; Ctrl+X edits the first queued prompt; ESC sends it immediately; Ctrl+D exits from an empty prompt; Alt+k / Alt+l select the previous or next interface model; Alt+, / Alt+. decrease or increase reasoning effort.
 
-`./sirio --help` lists the available options. `make test` runs the tests and
-`make sanitize` repeats them with ASan and UBSan.
+Saved sessions can be listed, resumed or deleted:
+```sh
+./sirio sessions --list
+./sirio sessions --resume ID
+./sirio sessions --delete ID
+```
 
-Agents can use the `subagent` tool to delegate focused work to another
-host-side agent process with inherited workspace, configuration and
-authentication. The optional `model` argument selects any active catalog model
-using `provider/model`; omitting it inherits the current model.
+A saved session may keep using its model after it is removed from the interface, as long as that model is still supported.
 
-The selected workspace is mounted read-write in the tool container. Content
-included in prompts or tool results is sent to the configured model provider.
+## Tests
+```sh
+make test
+make sanitize
+```
 
-## Known problems
+`make test` builds Sirio and runs the standalone test suite, including the container runner contract test. `make sanitize` repeats it under AddressSanitizer and UBSan.
 
-Session history shown by `sessions --resume`, `/switch`, or `/history` is not
-yet rendered exactly like live output; some Markdown or terminal formatting
-may appear as plain text.
-
-`google_search` can repeatedly hit Google's automated-traffic block, even when
-Chromium is installed and later calls reuse the same browser process. For a
-known URL, use `visit_page` or `curl` through the `bash` tool.
-
-## Origin and license
-
-Sirio started from the agent layer of [DS4 Agent](https://github.com/antirez/ds4)
-by Salvatore Sanfilippo and uses linenoise. See [LICENSE](LICENSE).
+## Known limitations
+- Session history shown by `sessions --resume`, `/switch` or `/history` is not yet rendered exactly like live output; some formatting may appear as plain text.
+- `google_search` can repeatedly hit Google's automated-traffic block. For a known URL, use `visit_page` or `curl` through the `bash` tool.

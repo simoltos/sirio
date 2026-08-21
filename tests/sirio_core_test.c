@@ -521,9 +521,13 @@ static void test_worker_free(agent_worker *w) {
     pthread_mutex_destroy(&w->mu);
 }
 
+static bool test_expect_restoring_session;
+
 static int test_select_model(sirio_engine *engine, const char *selection,
                              const char *reasoning_name,
                              char *error, size_t error_len) {
+    if (test_expect_restoring_session)
+        SIRIO_TEST_ASSERT(engine->restoring_session);
     const char *name = strrchr(selection, '/');
     sirio_provider provider = SIRIO_PROVIDER_NONE;
     if (name) {
@@ -1718,33 +1722,19 @@ static void sirio_test_capture_free(sirio_main_capture *capture) {
     memset(capture, 0, sizeof(*capture));
 }
 
-static const char sirio_test_models_json[] =
+static const char sirio_test_defaults_json[] =
     "{\n"
-    "  \"interface\": {\n"
-    "    \"models\": [\"opencode-go/deepseek-v4-flash\", "
-                         "\"opencode-go/deepseek-v4-pro\", "
-                         "\"openai/gpt-5.6-luna\"],\n"
-    "    \"last_used\": {\"model\": null}\n"
-    "  },\n"
-    "  \"deepseek\": [{\"id\":\"deepseek-v4-flash\","
-                         "\"last_effort\":\"high\",\"active\":true}],\n"
-    "  \"openai\": [{\"id\":\"gpt-5.6-luna\","
-                       "\"last_effort\":\"low\",\"active\":true},{"
-                       "\"id\":\"gpt-5.6-sol\","
-                       "\"last_effort\":\"low\",\"active\":true}],\n"
-    "  \"opencode-go\": [{\"id\":\"deepseek-v4-flash\","
-                            "\"last_effort\":\"none\",\"active\":true},{"
-                            "\"id\":\"deepseek-v4-pro\","
-                            "\"last_effort\":\"high\",\"active\":true},{"
-                            "\"id\":\"glm-5.3\","
-                            "\"last_effort\":\"high\",\"active\":true}]\n"
+    "  \"models\": [\"opencode-go/deepseek-v4-flash\", "
+                      "\"opencode-go/deepseek-v4-pro\", "
+                      "\"openai/gpt-5.6-luna\"],\n"
+    "  \"last_used\": {\"model\": null, \"reasoning\": null}\n"
     "}\n";
 
-static bool sirio_test_write_models(const char *home, const char *json) {
+static bool sirio_test_write_defaults(const char *home, const char *json) {
     char directory[PATH_MAX];
     char path[PATH_MAX];
     if (snprintf(directory, sizeof(directory), "%s/.sirio", home) < 0 ||
-        snprintf(path, sizeof(path), "%s/models.json", directory) < 0)
+        snprintf(path, sizeof(path), "%s/default.json", directory) < 0)
         return false;
     if (mkdir(directory, S_IRWXU) != 0 && errno != EEXIST) return false;
     FILE *fp = fopen(path, "wb");
@@ -1761,17 +1751,17 @@ static void test_system_prompt_includes_runtime_model_catalog(void) {
     char *home = mkdtemp(home_template);
     SIRIO_TEST_ASSERT(home != NULL);
     if (!home) return;
-    SIRIO_TEST_ASSERT(sirio_test_write_models(
-        home, sirio_test_models_json));
+    SIRIO_TEST_ASSERT(sirio_test_write_defaults(
+        home, sirio_test_defaults_json));
 
-    char models_path[PATH_MAX];
-    snprintf(models_path, sizeof(models_path),
-             "%s/.sirio/models.json", home);
+    char defaults_path[PATH_MAX];
+    snprintf(defaults_path, sizeof(defaults_path),
+             "%s/.sirio/default.json", home);
     char error[160] = {0};
-    sirio_model_store *models = sirio_model_store_load(
-        models_path, error, sizeof(error));
-    SIRIO_TEST_ASSERT(models != NULL);
-    if (models) {
+    sirio_default_store *defaults = sirio_default_store_load(
+        defaults_path, error, sizeof(error));
+    SIRIO_TEST_ASSERT(defaults != NULL);
+    if (defaults) {
         agent_worker worker;
         test_worker_init(&worker);
         agent_config config;
@@ -1780,7 +1770,7 @@ static void test_system_prompt_includes_runtime_model_catalog(void) {
             .provider = SIRIO_PROVIDER_OPENCODE_GO,
             .model = sirio_model_find_for_provider(
                 SIRIO_PROVIDER_OPENCODE_GO, "deepseek-v4-flash"),
-            .models = models,
+            .defaults = defaults,
             .reasoning = SIRIO_REASONING_NONE,
         };
         worker.cfg = &config;
@@ -1814,12 +1804,12 @@ static void test_system_prompt_includes_runtime_model_catalog(void) {
             prompt, "Calls are synchronous"));
         free(prompt);
         test_worker_free(&worker);
-        sirio_model_store_destroy(models);
+        sirio_default_store_destroy(defaults);
     }
 
     char sirio_dir[PATH_MAX];
     snprintf(sirio_dir, sizeof(sirio_dir), "%s/.sirio", home);
-    SIRIO_TEST_ASSERT(unlink(models_path) == 0);
+    SIRIO_TEST_ASSERT(unlink(defaults_path) == 0);
     SIRIO_TEST_ASSERT(rmdir(sirio_dir) == 0);
     SIRIO_TEST_ASSERT(rmdir(home) == 0);
 }
@@ -1846,16 +1836,51 @@ static void test_main_parses_options_before_auth(void) {
     SIRIO_TEST_ASSERT(valid.status == 1);
     SIRIO_TEST_ASSERT(valid.err &&
                       strstr(valid.err,
-                             "models file") &&
-                      strstr(valid.err, "does not exist"));
+                             "no interface models are configured") &&
+                      strstr(valid.err, "catalog --default"));
     sirio_test_capture_free(&valid);
-    SIRIO_TEST_ASSERT(sirio_test_write_models(
-        home, sirio_test_models_json));
+
+    char *providers_argv[] = {"sirio", "catalog", "--providers"};
+    sirio_main_capture providers = sirio_test_capture_main(
+        3, providers_argv, NULL);
+    SIRIO_TEST_ASSERT(providers.status == 0);
+    for (size_t i = 0; i < sirio_provider_count(); i++) {
+        const sirio_provider_info *provider = sirio_provider_at(i);
+        SIRIO_TEST_ASSERT(provider && providers.out &&
+                          strstr(providers.out, provider->name));
+    }
+    SIRIO_TEST_ASSERT(!providers.err ||
+                      !strstr(providers.err, "models file"));
+    sirio_test_capture_free(&providers);
+
+    char *auth_status_argv[] = {"sirio", "auth", "--status"};
+    sirio_main_capture auth_status = sirio_test_capture_main(
+        3, auth_status_argv, NULL);
+    SIRIO_TEST_ASSERT(auth_status.status == 0);
+    SIRIO_TEST_ASSERT(auth_status.out && strstr(auth_status.out, "deepseek"));
+    SIRIO_TEST_ASSERT(!auth_status.err ||
+                      !strstr(auth_status.err, "models file"));
+    sirio_test_capture_free(&auth_status);
+
+    char *models_argv[] = {"sirio", "catalog", "--models"};
+    sirio_main_capture models = sirio_test_capture_main(
+        3, models_argv, NULL);
+    SIRIO_TEST_ASSERT(models.status == 0);
+    SIRIO_TEST_ASSERT(models.out &&
+                      strstr(models.out, "deepseek/deepseek-v4-flash"));
+    SIRIO_TEST_ASSERT(models.out && strstr(models.out, "scope subagent"));
+    char sirio_dir[PATH_MAX];
+    snprintf(sirio_dir, sizeof(sirio_dir), "%s/.sirio", home);
+    SIRIO_TEST_ASSERT(access(sirio_dir, F_OK) != 0 && errno == ENOENT);
+    sirio_test_capture_free(&models);
+
+    SIRIO_TEST_ASSERT(sirio_test_write_defaults(
+        home, sirio_test_defaults_json));
     valid = sirio_test_capture_main(4, valid_argv, NULL);
     SIRIO_TEST_ASSERT(valid.status == 1);
     SIRIO_TEST_ASSERT(valid.err &&
                       strstr(valid.err,
-                             "no active interface model has configured credentials"));
+                             "no interface model has configured credentials"));
     sirio_test_capture_free(&valid);
     sirio_main_capture help = sirio_test_capture_main(2, help_argv, NULL);
     SIRIO_TEST_ASSERT(help.status == 0);
@@ -1971,12 +1996,176 @@ static void test_main_parses_options_before_auth(void) {
     } else {
         SIRIO_TEST_ASSERT(unsetenv("HOME") == 0);
     }
-    char models_path[PATH_MAX];
-    char sirio_dir[PATH_MAX];
-    snprintf(models_path, sizeof(models_path), "%s/.sirio/models.json", home);
-    snprintf(sirio_dir, sizeof(sirio_dir), "%s/.sirio", home);
-    SIRIO_TEST_ASSERT(unlink(models_path) == 0);
+    char defaults_path[PATH_MAX];
+    snprintf(defaults_path, sizeof(defaults_path),
+             "%s/.sirio/default.json", home);
+    SIRIO_TEST_ASSERT(unlink(defaults_path) == 0);
     SIRIO_TEST_ASSERT(rmdir(sirio_dir) == 0);
+    SIRIO_TEST_ASSERT(rmdir(home) == 0);
+}
+
+static void test_main_manages_interface_defaults(void) {
+    char home_template[] = "/tmp/sirio-main-defaults-XXXXXX";
+    char *home = mkdtemp(home_template);
+    SIRIO_TEST_ASSERT(home != NULL);
+    if (!home) return;
+    const char *old_home_env = getenv("HOME");
+    char *old_home = old_home_env ? xstrdup(old_home_env) : NULL;
+    SIRIO_TEST_ASSERT(setenv("HOME", home, 1) == 0);
+
+    char sirio_dir[PATH_MAX];
+    char defaults_path[PATH_MAX];
+    char old_models_path[PATH_MAX];
+    snprintf(sirio_dir, sizeof(sirio_dir), "%s/.sirio", home);
+    snprintf(defaults_path, sizeof(defaults_path),
+             "%s/.sirio/default.json", home);
+    snprintf(old_models_path, sizeof(old_models_path),
+             "%s/.sirio/models.json", home);
+
+    char *remove_missing_argv[] = {
+        "sirio", "catalog", "--remove", "retired/old-model",
+    };
+    sirio_main_capture remove_missing = sirio_test_capture_main(
+        4, remove_missing_argv, NULL);
+    SIRIO_TEST_ASSERT(remove_missing.status == 0);
+    SIRIO_TEST_ASSERT(remove_missing.out &&
+                      strstr(remove_missing.out, "unchanged"));
+    SIRIO_TEST_ASSERT(access(sirio_dir, F_OK) != 0 && errno == ENOENT);
+    sirio_test_capture_free(&remove_missing);
+
+    char *add_argv[] = {
+        "sirio", "catalog", "--default",
+        "opencode-go/deepseek-v4-flash, openai/gpt-5.6-luna,"
+        "opencode-go/deepseek-v4-flash",
+    };
+    sirio_main_capture add = sirio_test_capture_main(4, add_argv, NULL);
+    SIRIO_TEST_ASSERT(add.status == 0);
+    SIRIO_TEST_ASSERT(add.out && strstr(add.out, "Added 2"));
+    sirio_test_capture_free(&add);
+
+    struct stat directory_stat;
+    struct stat file_stat;
+    SIRIO_TEST_ASSERT(stat(sirio_dir, &directory_stat) == 0);
+    SIRIO_TEST_ASSERT(stat(defaults_path, &file_stat) == 0);
+    SIRIO_TEST_ASSERT((directory_stat.st_mode & (S_IRWXG | S_IRWXO)) == 0);
+    SIRIO_TEST_ASSERT((file_stat.st_mode & (S_IRWXG | S_IRWXO)) == 0);
+    char error[256] = {0};
+    sirio_default_store *defaults = sirio_default_store_load(
+        defaults_path, error, sizeof(error));
+    SIRIO_TEST_ASSERT(defaults != NULL);
+    if (defaults) {
+        SIRIO_TEST_ASSERT(sirio_default_store_count(defaults) == 2);
+        const sirio_model_info *first = sirio_default_store_at(defaults, 0);
+        const sirio_model_info *second = sirio_default_store_at(defaults, 1);
+        SIRIO_TEST_ASSERT(first && first->provider ==
+                          SIRIO_PROVIDER_OPENCODE_GO);
+        SIRIO_TEST_ASSERT(second && second->provider == SIRIO_PROVIDER_OPENAI);
+        SIRIO_TEST_ASSERT(!sirio_default_store_last_used(
+            defaults, NULL, NULL));
+        sirio_default_store_destroy(defaults);
+    }
+
+    FILE *old_models = fopen(old_models_path, "wb");
+    SIRIO_TEST_ASSERT(old_models != NULL);
+    if (old_models) {
+        fputs("this file is deliberately ignored\n", old_models);
+        SIRIO_TEST_ASSERT(fclose(old_models) == 0);
+    }
+    char *list_argv[] = {"sirio", "catalog", "--models"};
+    sirio_main_capture list = sirio_test_capture_main(3, list_argv, NULL);
+    SIRIO_TEST_ASSERT(list.status == 0);
+    SIRIO_TEST_ASSERT(list.out && strstr(
+        list.out, "opencode-go/deepseek-v4-flash"));
+    SIRIO_TEST_ASSERT(list.out && strstr(list.out, "scope interface"));
+    SIRIO_TEST_ASSERT(list.out && strstr(
+        list.out, "opencode-go/glm-5.3"));
+    SIRIO_TEST_ASSERT(list.out && strstr(list.out, "scope subagent"));
+    sirio_test_capture_free(&list);
+
+    char *invalid_batch_argv[] = {
+        "sirio", "catalog", "--default",
+        "deepseek/deepseek-v4-pro,missing/no-model",
+    };
+    sirio_main_capture invalid_batch = sirio_test_capture_main(
+        4, invalid_batch_argv, NULL);
+    SIRIO_TEST_ASSERT(invalid_batch.status == 2);
+    SIRIO_TEST_ASSERT(invalid_batch.err &&
+                      strstr(invalid_batch.err, "unknown model provider"));
+    sirio_test_capture_free(&invalid_batch);
+    defaults = sirio_default_store_load(
+        defaults_path, error, sizeof(error));
+    SIRIO_TEST_ASSERT(defaults != NULL);
+    if (defaults) {
+        SIRIO_TEST_ASSERT(sirio_default_store_count(defaults) == 2);
+        SIRIO_TEST_ASSERT(!sirio_default_store_contains(
+            defaults, sirio_model_find_for_provider(
+                SIRIO_PROVIDER_DEEPSEEK, "deepseek-v4-pro")));
+        sirio_default_store_destroy(defaults);
+    }
+
+    char *short_name_argv[] = {
+        "sirio", "catalog", "--default", "gpt-5.6-luna",
+    };
+    sirio_main_capture short_name = sirio_test_capture_main(
+        4, short_name_argv, NULL);
+    SIRIO_TEST_ASSERT(short_name.status == 2);
+    SIRIO_TEST_ASSERT(short_name.err &&
+                      strstr(short_name.err, "provider/model"));
+    sirio_test_capture_free(&short_name);
+
+    char *remove_argv[] = {
+        "sirio", "catalog", "--remove",
+        "opencode-go/deepseek-v4-flash,openai/gpt-5.6-luna",
+    };
+    sirio_main_capture remove = sirio_test_capture_main(
+        4, remove_argv, NULL);
+    SIRIO_TEST_ASSERT(remove.status == 0);
+    SIRIO_TEST_ASSERT(remove.out && strstr(remove.out, "Removed 2"));
+    sirio_test_capture_free(&remove);
+    defaults = sirio_default_store_load(
+        defaults_path, error, sizeof(error));
+    SIRIO_TEST_ASSERT(defaults != NULL);
+    if (defaults) {
+        SIRIO_TEST_ASSERT(sirio_default_store_count(defaults) == 0);
+        sirio_default_store_destroy(defaults);
+    }
+    SIRIO_TEST_ASSERT(unlink(defaults_path) == 0);
+    list = sirio_test_capture_main(3, list_argv, NULL);
+    SIRIO_TEST_ASSERT(list.status == 0);
+    SIRIO_TEST_ASSERT(list.out && strstr(list.out, "scope subagent"));
+    SIRIO_TEST_ASSERT(access(defaults_path, F_OK) != 0 && errno == ENOENT);
+    sirio_test_capture_free(&list);
+
+    char *run_argv[] = {
+        "sirio", "--non-interactive", "--prompt", "hello",
+    };
+    sirio_main_capture run = sirio_test_capture_main(4, run_argv, NULL);
+    SIRIO_TEST_ASSERT(run.status == 1);
+    SIRIO_TEST_ASSERT(run.err && strstr(run.err, "catalog --default"));
+    sirio_test_capture_free(&run);
+
+    FILE *broken = fopen(defaults_path, "wb");
+    SIRIO_TEST_ASSERT(broken != NULL);
+    if (broken) {
+        fputs("broken defaults", broken);
+        SIRIO_TEST_ASSERT(fclose(broken) == 0);
+        SIRIO_TEST_ASSERT(chmod(defaults_path, S_IRUSR | S_IWUSR) == 0);
+    }
+    list = sirio_test_capture_main(3, list_argv, NULL);
+    SIRIO_TEST_ASSERT(list.status == 1);
+    SIRIO_TEST_ASSERT(!list.out || !list.out[0]);
+    SIRIO_TEST_ASSERT(list.err && strstr(list.err, "invalid default file"));
+    sirio_test_capture_free(&list);
+
+    SIRIO_TEST_ASSERT(unlink(old_models_path) == 0);
+    SIRIO_TEST_ASSERT(unlink(defaults_path) == 0);
+    SIRIO_TEST_ASSERT(rmdir(sirio_dir) == 0);
+    if (old_home) {
+        SIRIO_TEST_ASSERT(setenv("HOME", old_home, 1) == 0);
+        free(old_home);
+    } else {
+        SIRIO_TEST_ASSERT(unsetenv("HOME") == 0);
+    }
     SIRIO_TEST_ASSERT(rmdir(home) == 0);
 }
 
@@ -1992,8 +2181,8 @@ static void test_main_auth_and_selection_actions(void) {
     const char *old_home_env = getenv("HOME");
     char *old_home = old_home_env ? xstrdup(old_home_env) : NULL;
     SIRIO_TEST_ASSERT(setenv("HOME", home, 1) == 0);
-    SIRIO_TEST_ASSERT(sirio_test_write_models(
-        home, sirio_test_models_json));
+    SIRIO_TEST_ASSERT(sirio_test_write_defaults(
+        home, sirio_test_defaults_json));
 
     char *deep_argv[] = {
         "sirio", "auth", "--api-key", "deepseek", "--stdin",
@@ -2069,8 +2258,8 @@ static void test_main_auth_and_selection_actions(void) {
     SIRIO_TEST_ASSERT(providers.status == 0);
     SIRIO_TEST_ASSERT(providers.out && strstr(providers.out, "deepseek"));
     SIRIO_TEST_ASSERT(providers.out && strstr(providers.out, "openai"));
-    SIRIO_TEST_ASSERT(providers.out &&
-                      strstr(providers.out, "configured 2; interface 1"));
+    SIRIO_TEST_ASSERT(providers.out && strstr(
+        providers.out, "auth api-key; credentials available"));
     sirio_test_capture_free(&providers);
 
     char *models_argv[] = {
@@ -2080,7 +2269,6 @@ static void test_main_auth_and_selection_actions(void) {
         5, models_argv, NULL);
     SIRIO_TEST_ASSERT(models.status == 0);
     SIRIO_TEST_ASSERT(models.out && strstr(models.out, "gpt-5.6-luna"));
-    SIRIO_TEST_ASSERT(models.out && strstr(models.out, "active true"));
     SIRIO_TEST_ASSERT(models.out && strstr(models.out, "scope interface"));
     SIRIO_TEST_ASSERT(models.out && strstr(models.out, "scope subagent"));
     SIRIO_TEST_ASSERT(!strstr(models.out, "deepseek-v4-flash"));
@@ -2115,33 +2303,37 @@ static void test_main_auth_and_selection_actions(void) {
                               "deepseek-v4-flash"));
     sirio_test_capture_free(&models_global_first);
 
-    char models_path[PATH_MAX];
-    snprintf(models_path, sizeof(models_path), "%s/.sirio/models.json", home);
-    SIRIO_TEST_ASSERT(access(models_path, F_OK) == 0);
-    sirio_model_store *model_store = sirio_model_store_load(
-        models_path, auth_error, sizeof(auth_error));
-    SIRIO_TEST_ASSERT(model_store != NULL);
-    if (model_store) {
-        const sirio_model_info *selected = sirio_model_store_resolve(
-            model_store, SIRIO_PROVIDER_OPENAI, "gpt-5.6-luna",
+    char defaults_path[PATH_MAX];
+    snprintf(defaults_path, sizeof(defaults_path),
+             "%s/.sirio/default.json", home);
+    SIRIO_TEST_ASSERT(access(defaults_path, F_OK) == 0);
+    sirio_default_store *default_store = sirio_default_store_load(
+        defaults_path, auth_error, sizeof(auth_error));
+    SIRIO_TEST_ASSERT(default_store != NULL);
+    if (default_store) {
+        const sirio_model_info *selected = sirio_default_store_resolve(
+            default_store, "openai/gpt-5.6-luna",
             auth_error, sizeof(auth_error));
         SIRIO_TEST_ASSERT(selected != NULL);
-        SIRIO_TEST_ASSERT(sirio_model_store_set_last_used(
-            model_store, selected, SIRIO_REASONING_LOW) == 0);
-        SIRIO_TEST_ASSERT(sirio_model_store_save(
-            model_store, models_path, auth_error, sizeof(auth_error)) == 0);
-        sirio_model_store_destroy(model_store);
+        SIRIO_TEST_ASSERT(sirio_default_store_set_last_used(
+            default_store, selected, SIRIO_REASONING_LOW) == 0);
+        SIRIO_TEST_ASSERT(sirio_default_store_save(
+            default_store, defaults_path,
+            auth_error, sizeof(auth_error)) == 0);
+        sirio_default_store_destroy(default_store);
     }
-    model_store = sirio_model_store_load(
-        models_path, auth_error, sizeof(auth_error));
-    SIRIO_TEST_ASSERT(model_store != NULL);
-    if (model_store) {
+    default_store = sirio_default_store_load(
+        defaults_path, auth_error, sizeof(auth_error));
+    SIRIO_TEST_ASSERT(default_store != NULL);
+    if (default_store) {
         const sirio_model_info *last_model = NULL;
-        SIRIO_TEST_ASSERT(sirio_model_store_last_used(
-            model_store, &last_model));
+        sirio_reasoning_effort last_reasoning = SIRIO_REASONING_NONE;
+        SIRIO_TEST_ASSERT(sirio_default_store_last_used(
+            default_store, &last_model, &last_reasoning));
         SIRIO_TEST_ASSERT(last_model &&
                           !strcmp(last_model->name, "gpt-5.6-luna"));
-        sirio_model_store_destroy(model_store);
+        SIRIO_TEST_ASSERT(last_reasoning == SIRIO_REASONING_LOW);
+        sirio_default_store_destroy(default_store);
     }
 
     char *conflict_argv[] = {
@@ -2194,49 +2386,8 @@ static void test_main_auth_and_selection_actions(void) {
     SIRIO_TEST_ASSERT(login.err && strstr(login.err, "does not support OAuth"));
     sirio_test_capture_free(&login);
 
-    FILE *inactive_models = fopen(models_path, "wb");
-    SIRIO_TEST_ASSERT(inactive_models != NULL);
-    if (inactive_models) {
-        static const char inactive_json[] =
-            "{\"interface\":{\"models\":["
-            "\"opencode-go/deepseek-v4-flash\","
-            "\"opencode-go/deepseek-v4-pro\"],"
-            "\"last_used\":{\"model\":null}},"
-            "\"opencode-go\":["
-            "{\"id\":\"deepseek-v4-flash\","
-            "\"last_effort\":\"none\",\"active\":false},"
-            "{\"id\":\"deepseek-v4-pro\","
-            "\"last_effort\":\"high\",\"active\":false},"
-            "{\"id\":\"glm-5.3\","
-            "\"last_effort\":\"high\",\"active\":true}]}\n";
-        SIRIO_TEST_ASSERT(fwrite(inactive_json, 1,
-                                 sizeof(inactive_json) - 1,
-                                 inactive_models) ==
-                          sizeof(inactive_json) - 1);
-        SIRIO_TEST_ASSERT(fclose(inactive_models) == 0);
-    }
-    char *inactive_list_argv[] = {
-        "sirio", "catalog", "--models", "--provider", "opencode-go",
-    };
-    sirio_main_capture inactive_list = sirio_test_capture_main(
-        5, inactive_list_argv, NULL);
-    SIRIO_TEST_ASSERT(inactive_list.status == 0);
-    SIRIO_TEST_ASSERT(inactive_list.out &&
-                      strstr(inactive_list.out, "active false"));
-    sirio_test_capture_free(&inactive_list);
-    char *inactive_argv[] = {
-        "sirio", "--non-interactive", "--prompt", "hello",
-    };
-    sirio_main_capture inactive = sirio_test_capture_main(
-        4, inactive_argv, NULL);
-    SIRIO_TEST_ASSERT(inactive.status == 1);
-    SIRIO_TEST_ASSERT(inactive.err &&
-                      strstr(inactive.err,
-                             "no active interface model has configured credentials"));
-    sirio_test_capture_free(&inactive);
-
     SIRIO_TEST_ASSERT(unlink(auth_path) == 0);
-    SIRIO_TEST_ASSERT(unlink(models_path) == 0);
+    SIRIO_TEST_ASSERT(unlink(defaults_path) == 0);
     char sirio_dir[PATH_MAX];
     snprintf(sirio_dir, sizeof(sirio_dir), "%s/.sirio", home);
     SIRIO_TEST_ASSERT(rmdir(sirio_dir) == 0);
@@ -2244,6 +2395,70 @@ static void test_main_auth_and_selection_actions(void) {
         SIRIO_TEST_ASSERT(setenv("HOME", old_home, 1) == 0);
         free(old_home);
     } else SIRIO_TEST_ASSERT(unsetenv("HOME") == 0);
+    SIRIO_TEST_ASSERT(rmdir(home) == 0);
+}
+
+static void test_main_resume_accepts_supported_session_model(void) {
+    char home_template[] = "/tmp/sirio-main-resume-model-XXXXXX";
+    char *home = mkdtemp(home_template);
+    SIRIO_TEST_ASSERT(home != NULL);
+    if (!home) return;
+    const char *old_home_env = getenv("HOME");
+    char *old_home = old_home_env ? xstrdup(old_home_env) : NULL;
+    SIRIO_TEST_ASSERT(setenv("HOME", home, 1) == 0);
+
+    char sessions_dir[PATH_MAX];
+    snprintf(sessions_dir, sizeof(sessions_dir),
+             "%s/.sirio/sessions", home);
+    SIRIO_TEST_ASSERT(agent_mkdir_p(sessions_dir));
+    sirio_conv_msg messages[2] = {
+        {.role = SIRIO_ROLE_SYSTEM, .text = "system"},
+        {.role = SIRIO_ROLE_USER, .text = "resume specialist"},
+    };
+    char sha[41];
+    agent_session_identity_sha("resume specialist", 100, sha);
+    char *path = sirio_session_path(sessions_dir, sha);
+    char error[160] = {0};
+    SIRIO_TEST_ASSERT(sirio_session_write(
+        path, "resume specialist", 100, 101, "openai", "gpt-5.6-sol",
+        "high", messages, 2, error, sizeof(error)));
+
+    char *resume_argv[] = {"sirio", "sessions", "--resume", sha};
+    sirio_main_capture resume = sirio_test_capture_main(
+        4, resume_argv, NULL);
+    SIRIO_TEST_ASSERT(resume.status == 1);
+    SIRIO_TEST_ASSERT(resume.err && strstr(
+        resume.err, "no authentication is configured for openai"));
+    SIRIO_TEST_ASSERT(!strstr(resume.err, "only through subagent"));
+    sirio_test_capture_free(&resume);
+
+    char stale_sha[41];
+    agent_session_identity_sha("stale specialist", 200, stale_sha);
+    char *stale_path = sirio_session_path(sessions_dir, stale_sha);
+    SIRIO_TEST_ASSERT(sirio_session_write(
+        stale_path, "stale specialist", 200, 201, "openai", "retired-model",
+        "high", messages, 2, error, sizeof(error)));
+    char *stale_argv[] = {"sirio", "sessions", "--resume", stale_sha};
+    sirio_main_capture stale = sirio_test_capture_main(
+        4, stale_argv, NULL);
+    SIRIO_TEST_ASSERT(stale.status == 1);
+    SIRIO_TEST_ASSERT(stale.err && strstr(stale.err, "not supported"));
+    sirio_test_capture_free(&stale);
+
+    SIRIO_TEST_ASSERT(unlink(path) == 0);
+    SIRIO_TEST_ASSERT(unlink(stale_path) == 0);
+    free(path);
+    free(stale_path);
+    SIRIO_TEST_ASSERT(rmdir(sessions_dir) == 0);
+    char sirio_dir[PATH_MAX];
+    snprintf(sirio_dir, sizeof(sirio_dir), "%s/.sirio", home);
+    SIRIO_TEST_ASSERT(rmdir(sirio_dir) == 0);
+    if (old_home) {
+        SIRIO_TEST_ASSERT(setenv("HOME", old_home, 1) == 0);
+        free(old_home);
+    } else {
+        SIRIO_TEST_ASSERT(unsetenv("HOME") == 0);
+    }
     SIRIO_TEST_ASSERT(rmdir(home) == 0);
 }
 
@@ -2526,8 +2741,11 @@ static void test_cloud_session_persistence(void) {
     conv_append(0, "replacement system");
     conv_append(1, "replacement user");
     err[0] = '\0';
+    test_expect_restoring_session = true;
     SIRIO_TEST_ASSERT(agent_worker_switch_session(
         &w, sha, 1, err, sizeof(err)));
+    test_expect_restoring_session = false;
+    SIRIO_TEST_ASSERT(!engine.restoring_session);
     SIRIO_TEST_ASSERT(engine.provider == SIRIO_PROVIDER_DEEPSEEK);
     SIRIO_TEST_ASSERT(engine.model &&
                       !strcmp(engine.model->name, "deepseek-v4-flash"));
@@ -2655,15 +2873,16 @@ static void test_cli_session_actions_are_standalone(void) {
     snprintf(sessions_dir, sizeof(sessions_dir), "%s/.sirio/sessions", root);
     SIRIO_TEST_ASSERT(agent_mkdir_p(sessions_dir));
     char auth_path[PATH_MAX];
-    char models_path[PATH_MAX];
+    char defaults_path[PATH_MAX];
     snprintf(auth_path, sizeof(auth_path), "%s/.sirio/auth.json", root);
-    snprintf(models_path, sizeof(models_path), "%s/.sirio/models.json", root);
+    snprintf(defaults_path, sizeof(defaults_path),
+             "%s/.sirio/default.json", root);
     FILE *fp = fopen(auth_path, "wb");
     SIRIO_TEST_ASSERT(fp != NULL);
     if (fp) { fputs("broken auth", fp); fclose(fp); }
-    fp = fopen(models_path, "wb");
+    fp = fopen(defaults_path, "wb");
     SIRIO_TEST_ASSERT(fp != NULL);
-    if (fp) { fputs("broken models", fp); fclose(fp); }
+    if (fp) { fputs("broken defaults", fp); fclose(fp); }
 
     sirio_conv_msg messages[2] = {
         {.role = SIRIO_ROLE_SYSTEM, .text = "system"},
@@ -2720,7 +2939,7 @@ static void test_cli_session_actions_are_standalone(void) {
 
     free(path);
     unlink(auth_path);
-    unlink(models_path);
+    unlink(defaults_path);
     rmdir(sessions_dir);
     char sirio_dir[PATH_MAX];
     snprintf(sirio_dir, sizeof(sirio_dir), "%s/.sirio", root);
@@ -3019,7 +3238,9 @@ int main(int argc, char **argv) {
     test_runtime_selection_and_reasoning_steps();
     test_worker_cancel_poll_tracks_interrupt_latch();
     test_main_parses_options_before_auth();
+    test_main_manages_interface_defaults();
     test_main_auth_and_selection_actions();
+    test_main_resume_accepts_supported_session_model();
     test_agent_entry_installs_and_restores_signals();
     test_worker_lifecycle_failure_cleanup();
     test_worker_free_releases_owned_fields();
