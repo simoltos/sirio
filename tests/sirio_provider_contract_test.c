@@ -526,6 +526,57 @@ static void test_sse_text_reasoning_usage_and_metadata(void) {
     stream_capture_free(&capture);
 }
 
+static void test_opencode_cumulative_stream_usage(void) {
+    stream_capture capture = {0};
+    sirio_bridge bridge = {
+        .provider_id = SIRIO_PROVIDER_OPENCODE_GO,
+    };
+    stream_response response = {
+        .bridge = &bridge,
+        .callback = capture_stream_event,
+        .private_data = &capture,
+    };
+    test_stream_set_sse_header(&response);
+    const char *body =
+        "data: {\"id\":\"req-go\",\"model\":\"deepseek-v4-flash\","
+        "\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":"
+        "\"reason\"},\"finish_reason\":null}],\"usage\":{"
+        "\"prompt_tokens\":11,\"completion_tokens\":1,"
+        "\"total_tokens\":12}}\n\n"
+        "data: {\"id\":\"req-go\",\"model\":\"deepseek-v4-flash\","
+        "\"choices\":[{\"index\":0,\"delta\":{\"content\":\"ok\"},"
+        "\"finish_reason\":null}],\"usage\":{\"prompt_tokens\":11,"
+        "\"completion_tokens\":4,\"total_tokens\":15}}\n\n"
+        "data: {\"id\":\"req-go\",\"model\":\"deepseek-v4-flash\","
+        "\"choices\":[{\"index\":0,\"delta\":{},"
+        "\"finish_reason\":\"stop\"}]}\n\n"
+        "data: {\"id\":\"req-go\",\"model\":\"deepseek-v4-flash\","
+        "\"choices\":[],\"usage\":{\"prompt_tokens\":11,"
+        "\"completion_tokens\":5,\"total_tokens\":16,"
+        "\"prompt_cache_hit_tokens\":7,\"prompt_cache_miss_tokens\":4,"
+        "\"completion_tokens_details\":{\"reasoning_tokens\":3}}}\n\n"
+        "data: [DONE]\n\n"
+        "data: {\"choices\":[],\"cost\":\"0\"}\n\n";
+
+    TEST_ASSERT(test_stream_feed_chunks(&response, body, 3) == 0);
+    TEST_ASSERT(stream_finish(&response) == 0);
+    TEST_ASSERT(capture.reasoning.data != NULL);
+    TEST_ASSERT(!strcmp(capture.reasoning.data, "reason"));
+    TEST_ASSERT(capture.text.data != NULL);
+    TEST_ASSERT(!strcmp(capture.text.data, "ok"));
+    TEST_ASSERT(capture.usage_events == 1);
+    TEST_ASSERT(capture.done_events == 1);
+    TEST_ASSERT(capture.prompt_tokens == 11);
+    TEST_ASSERT(capture.completion_tokens == 5);
+    TEST_ASSERT(capture.total_tokens == 16);
+    TEST_ASSERT(capture.reasoning_tokens == 3);
+    TEST_ASSERT(capture.cache_hit_tokens == 7);
+    TEST_ASSERT(capture.cache_miss_tokens == 4);
+
+    stream_response_free(&response);
+    stream_capture_free(&capture);
+}
+
 static void test_sse_tool_call_fragments(void) {
     stream_capture capture = {0};
     stream_response response = {
@@ -1196,6 +1247,7 @@ int main(void) {
     test_invalid_generation_options();
     test_model_catalog_capabilities();
     test_sse_text_reasoning_usage_and_metadata();
+    test_opencode_cumulative_stream_usage();
     test_sse_tool_call_fragments();
     test_sse_rejects_callback_and_malformed_terminal_state();
     test_openai_pkce_sha256();

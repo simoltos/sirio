@@ -129,10 +129,14 @@ static const char valid_sse[] =
 static const char valid_opencode_sse[] =
     "data: {\"id\":\"req-http\",\"model\":\"deepseek-test\","
     "\"choices\":[{\"index\":0,\"delta\":{\"content\":\"ok\"},"
+    "\"finish_reason\":null}],\"usage\":{\"prompt_tokens\":2,"
+    "\"completion_tokens\":1,\"total_tokens\":3}}\n\n"
+    "data: {\"id\":\"req-http\",\"model\":\"deepseek-test\","
+    "\"choices\":[{\"index\":0,\"delta\":{},"
     "\"finish_reason\":\"stop\"}]}\n\n"
     "data: {\"id\":\"req-http\",\"model\":\"deepseek-test\","
     "\"choices\":[],\"usage\":{\"prompt_tokens\":2,"
-    "\"completion_tokens\":1,\"total_tokens\":3}}\n\n"
+    "\"completion_tokens\":2,\"total_tokens\":4}}\n\n"
     "data: [DONE]\n\n"
     "data: {\"choices\":[],\"cost\":\"0\"}\n\n";
 

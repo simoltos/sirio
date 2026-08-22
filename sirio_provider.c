@@ -1832,6 +1832,7 @@ typedef struct {
     bridge_buffer pending;
     bridge_buffer event_data;
     deepseek_result calls;
+    sirio_bridge_event latest_usage;
     char *request_id;
     char *model;
     char *finish_reason;
@@ -2593,6 +2594,30 @@ static int stream_emit(stream_response *response,
     return stream_fail(response, "agent rejected a Chat Completions event");
 }
 
+static bool stream_usage_is_cumulative(const stream_response *response) {
+    return response->bridge &&
+           response->bridge->provider_id == SIRIO_PROVIDER_OPENCODE_GO;
+}
+
+static void stream_remember_usage(stream_response *response,
+                                  const deepseek_result *chunk) {
+    response->latest_usage.prompt_tokens = chunk->prompt_tokens;
+    response->latest_usage.completion_tokens = chunk->completion_tokens;
+    response->latest_usage.total_tokens = chunk->total_tokens;
+    response->latest_usage.reasoning_tokens = chunk->reasoning_tokens;
+    response->latest_usage.prompt_cache_hit_tokens =
+        chunk->prompt_cache_hit_tokens;
+    response->latest_usage.prompt_cache_miss_tokens =
+        chunk->prompt_cache_miss_tokens;
+}
+
+static int stream_emit_usage(stream_response *response) {
+    response->latest_usage.type = SIRIO_BRIDGE_EVENT_USAGE;
+    response->latest_usage.request_id = response->request_id;
+    response->latest_usage.model = response->model;
+    return stream_emit(response, &response->latest_usage);
+}
+
 static int stream_set_identity(stream_response *response, char **stored,
                                const char *value, const char *label) {
     if (!value) return 0;
@@ -2743,24 +2768,15 @@ static int stream_dispatch_json(stream_response *response,
         }
     }
     if (chunk.has_usage) {
-        if (response->saw_usage) {
+        bool cumulative = stream_usage_is_cumulative(response);
+        if (response->saw_usage && !cumulative) {
             result_free(&chunk);
             return stream_fail(response,
                                "duplicate Chat Completions stream usage chunk");
         }
         response->saw_usage = 1;
-        sirio_bridge_event event = {
-            .type = SIRIO_BRIDGE_EVENT_USAGE,
-            .request_id = response->request_id,
-            .model = response->model,
-            .prompt_tokens = chunk.prompt_tokens,
-            .completion_tokens = chunk.completion_tokens,
-            .total_tokens = chunk.total_tokens,
-            .reasoning_tokens = chunk.reasoning_tokens,
-            .prompt_cache_hit_tokens = chunk.prompt_cache_hit_tokens,
-            .prompt_cache_miss_tokens = chunk.prompt_cache_miss_tokens,
-        };
-        if (stream_emit(response, &event) != 0) {
+        stream_remember_usage(response, &chunk);
+        if (!cumulative && stream_emit_usage(response) != 0) {
             result_free(&chunk);
             return -1;
         }
@@ -2989,6 +3005,13 @@ static int stream_finish(stream_response *response) {
     if (!tool_finish && response->calls.call_count != 0)
         return stream_fail(response,
                            "Chat Completions delivered tool calls with a non-tool finish reason");
+
+    /* OpenCode Go reports cumulative usage on ordinary delta chunks and then
+     * repeats the authoritative totals in its final empty-choices chunk. Keep
+     * the bridge contract at one usage event by publishing only the last one. */
+    if (stream_usage_is_cumulative(response) &&
+        stream_emit_usage(response) != 0)
+        return -1;
 
     for (size_t call_index = 0;
          call_index < response->calls.call_count; call_index++) {
